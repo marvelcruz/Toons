@@ -707,6 +707,306 @@ def _int_or_none(value):
         return None
 
 
+def seed_catalog_if_empty():
+    """
+    Populate the cloud catalogue from the bundled planning seed exactly once.
+    This removes the need for a user to upload the spreadsheet during normal use.
+    """
+    summary = catalog_summary()
+    if summary["people_total"] > 0 or summary["series_total"] > 0:
+        return summary
+
+    seed_path = Path(__file__).with_name("catalog_seed.json")
+    if not seed_path.exists():
+        return summary
+
+    data = json.loads(seed_path.read_text(encoding="utf-8"))
+
+    people_rows = []
+    series_rows = []
+
+    for row in data.get("master_checklist", []):
+        name = _first(row, "Woman / Character", "Character", "Name")
+        if not name:
+            continue
+
+        references = _first(
+            row,
+            "Bible Reference(s)",
+            "Bible References",
+            "Bible Reference",
+        )
+
+        people_rows.append(
+            {
+                "id": _stable(
+                    "person",
+                    "Master Checklist",
+                    name,
+                    references,
+                ),
+                "source_sheet": "Master Checklist",
+                "source_position": _int_or_none(
+                    _first(row, "Order", "Rank")
+                ),
+                "testament": _clean(_first(row, "Testament")),
+                "book": _clean(_first(row, "Book")),
+                "name": str(name).strip(),
+                "entity_type": "woman",
+                "named_status": _clean(
+                    _first(row, "Named Status")
+                ),
+                "bible_references": _clean(references),
+                "story_role": _clean(
+                    _first(
+                        row,
+                        "Story / Role",
+                        "Story/Role",
+                        "Story Role",
+                    )
+                ),
+                "priority": _clean(_first(row, "Priority")),
+                "cinematic_score": _float_or_none(
+                    _first(row, "Cinematic Score")
+                ),
+                "youtube_hook": _clean(
+                    _first(row, "YouTube Hook")
+                ),
+                "reference_asset_need": _clean(
+                    _first(row, "Reference Asset Need")
+                ),
+                "primary_environment": _clean(
+                    _first(row, "Primary Environment")
+                ),
+                "canon": _clean(_first(row, "Canon")),
+                "playlist_series": _clean(
+                    _first(
+                        row,
+                        "Playlist / Series",
+                        "Playlist/Series",
+                    )
+                ),
+                "notes": _clean(_first(row, "Notes")),
+                "source_url": _clean(
+                    _first(row, "Source URL")
+                ),
+                "ai_studio_audio_status": _clean(
+                    _first(row, "AI Studio Audio")
+                ),
+                "flow_reference_asset_status": _clean(
+                    _first(row, "Flow Reference Asset")
+                ),
+                "flow_scene_prompt_status": _clean(
+                    _first(row, "Flow Scene Prompt")
+                ),
+                "animation_status": _clean(
+                    _first(row, "Grok Animation", "Animation")
+                ),
+                "final_edit_status": _clean(
+                    _first(row, "Final Edit")
+                ),
+                "ready_status": _clean(
+                    _first(row, "Ready?", "Ready")
+                ),
+            }
+        )
+
+    for row in data.get("men_ranked", []):
+        name = _first(row, "Man / Character", "Character", "Name")
+        if not name:
+            continue
+
+        references = _first(
+            row,
+            "Bible Reference(s)",
+            "Bible References",
+            "Bible Reference",
+        )
+
+        people_rows.append(
+            {
+                "id": _stable(
+                    "person",
+                    "Men Ranked",
+                    name,
+                    references,
+                ),
+                "source_sheet": "Men Ranked",
+                "source_position": _int_or_none(
+                    _first(row, "Rank", "Order")
+                ),
+                "testament": _clean(_first(row, "Testament")),
+                "book": _clean(_first(row, "Book")),
+                "name": str(name).strip(),
+                "entity_type": "man",
+                "named_status": _clean(
+                    _first(row, "Named Status")
+                ),
+                "bible_references": _clean(references),
+                "story_role": _clean(
+                    _first(
+                        row,
+                        "Story / Role",
+                        "Story/Role",
+                        "Story Role",
+                    )
+                ),
+                "priority": _clean(_first(row, "Priority")),
+                "cinematic_score": _float_or_none(
+                    _first(row, "Cinematic Score")
+                ),
+                "youtube_hook": _clean(
+                    _first(row, "YouTube Hook")
+                ),
+                "reference_asset_need": _clean(
+                    _first(row, "Reference Asset Need")
+                ),
+                "primary_environment": _clean(
+                    _first(row, "Primary Environment")
+                ),
+                "canon": _clean(_first(row, "Canon")),
+                "playlist_series": _clean(
+                    _first(
+                        row,
+                        "Playlist / Series",
+                        "Playlist/Series",
+                    )
+                ),
+                "notes": _clean(_first(row, "Notes")),
+                "source_url": _clean(
+                    _first(row, "Source URL")
+                ),
+                "ai_studio_audio_status": _clean(
+                    _first(row, "AI Studio Audio")
+                ),
+                "flow_reference_asset_status": _clean(
+                    _first(row, "Flow Reference Asset")
+                ),
+                "flow_scene_prompt_status": _clean(
+                    _first(row, "Flow Scene Prompt")
+                ),
+                "animation_status": _clean(
+                    _first(row, "Grok Animation", "Animation")
+                ),
+                "final_edit_status": _clean(
+                    _first(row, "Final Edit")
+                ),
+                "ready_status": _clean(
+                    _first(row, "Ready?", "Ready")
+                ),
+            }
+        )
+
+    for row in data.get("series_playlists", []):
+        name = _first(
+            row,
+            "Series / Playlist",
+            "Series/Playlist",
+            "Series",
+        )
+        if not name:
+            continue
+
+        series_rows.append(
+            {
+                "id": _stable("series", name),
+                "rank": _int_or_none(_first(row, "Rank")),
+                "series_name": str(name).strip(),
+                "series_type": _clean(_first(row, "Type")),
+                "core_concept": _clean(
+                    _first(row, "Core Concept")
+                ),
+                "best_starter_episodes": _clean(
+                    _first(
+                        row,
+                        "Best Starter Episodes",
+                        "Starter Episodes",
+                    )
+                ),
+                "youtube_reason": _clean(
+                    _first(
+                        row,
+                        "Why It Can Work on YouTube",
+                        "YouTube Reason",
+                    )
+                ),
+                "recommended_scene_count": _clean(
+                    _first(
+                        row,
+                        "Recommended Scene Count",
+                        "Scene Count",
+                    )
+                ),
+                "recommended_runtime": _clean(
+                    _first(
+                        row,
+                        "Recommended Runtime",
+                        "Runtime",
+                    )
+                ),
+                "priority": _clean(_first(row, "Priority")),
+                "status": _clean(_first(row, "Status")),
+                "source_notes": _clean(
+                    _first(
+                        row,
+                        "Source / Notes",
+                        "Source Notes",
+                    )
+                ),
+            }
+        )
+
+    if using_supabase():
+        client = _client()
+        chunk_size = 100
+
+        for start in range(0, len(people_rows), chunk_size):
+            (
+                client.table("catalog_people")
+                .upsert(
+                    people_rows[start:start + chunk_size],
+                    on_conflict="id",
+                )
+                .execute()
+            )
+
+        for start in range(0, len(series_rows), chunk_size):
+            (
+                client.table("catalog_series")
+                .upsert(
+                    series_rows[start:start + chunk_size],
+                    on_conflict="id",
+                )
+                .execute()
+            )
+
+        return catalog_summary()
+
+    con = _local_connect()
+
+    for row in people_rows:
+        cols = list(row.keys())
+        values = [row[col] for col in cols]
+        placeholders = ",".join("?" for _ in cols)
+        con.execute(
+            f"INSERT OR REPLACE INTO catalog_people({','.join(cols)}) VALUES({placeholders})",
+            values,
+        )
+
+    for row in series_rows:
+        cols = list(row.keys())
+        values = [row[col] for col in cols]
+        placeholders = ",".join("?" for _ in cols)
+        con.execute(
+            f"INSERT OR REPLACE INTO catalog_series({','.join(cols)}) VALUES({placeholders})",
+            values,
+        )
+
+    con.commit()
+    con.close()
+    return catalog_summary()
+
+
 def import_spreadsheet(file_bytes):
     workbook = load_workbook(
         BytesIO(file_bytes),
