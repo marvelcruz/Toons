@@ -20,4 +20,4 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Check Python files
-        run: python -m py_compile app.py db.py workflow.py
+        run: python -m py_compile app.py db.py workflow.py prompt_composer.py
