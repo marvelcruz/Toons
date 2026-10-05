@@ -14,6 +14,11 @@ from db import (
     seed_catalog_if_empty,
     save_reference_asset,
     get_reference_asset,
+    save_project_asset,
+    list_project_assets,
+    signed_asset_url,
+    save_episode_metrics,
+    list_episode_metrics,
     using_supabase,
     auth_sign_in,
     auth_restore,
@@ -26,7 +31,13 @@ from workflow import (
     build_character_bible,
     plan_scenes,
     make_package,
+    _api_key,
+    narration_text,
+    list_tts_voices,
+    generate_tts_bytes,
+    review_scene_frame,
 )
+from prompt_composer import compose_scene_package, reference_summary
 
 st.set_page_config(
     page_title="ToonScripture OS",
@@ -239,6 +250,29 @@ with st.sidebar:
     st.divider()
     st.caption("You can move between sections at any time.")
 
+    st.divider()
+    st.markdown("### AI connection")
+    if _api_key():
+        st.success("AI tools are ready", icon="✅")
+    else:
+        st.caption(
+            "Add your Gemini API key here to create treatments, scripts, visuals, audio and reviews. "
+            "It stays in this browser session and is not saved to GitHub or the database."
+        )
+        gemini_key = st.text_input(
+            "Gemini API key",
+            type="password",
+            key="gemini_key_input",
+            label_visibility="collapsed",
+            placeholder="Paste Gemini API key",
+        )
+        if st.button("Connect AI", use_container_width=True):
+            if gemini_key.strip():
+                st.session_state.gemini_api_key = gemini_key.strip()
+                st.rerun()
+            else:
+                st.warning("Paste your Gemini API key first.")
+
     if using_supabase():
         if st.session_state.get("auth_email"):
             st.caption(f"Signed in as {st.session_state.auth_email}")
@@ -272,7 +306,9 @@ nav = st.tabs(
         "✍️ Story & Script",
         "🎨 Visual Bible",
         "🎞️ Scene Production",
+        "🎙️ Audio",
         "📺 YouTube",
+        "📦 Export",
     ]
 )
 
@@ -869,13 +905,35 @@ with nav[3]:
                 st.markdown("### 3. End")
                 st.write(scene.get("end_state") or "—")
 
+            scene_package = compose_scene_package(project["id"], scene)
+            scene_refs = reference_summary(scene_package)
+
+            if scene_refs:
+                st.markdown("### Continuity references")
+                approved_count = sum(1 for ref in scene_refs if ref["approved"])
+                st.caption(
+                    f"{approved_count} of {len(scene_refs)} relevant visual references are approved."
+                )
+                for ref in scene_refs:
+                    icon = "✅" if ref["approved"] else "○"
+                    st.write(
+                        f"{icon} {ref['name']} · "
+                        f"{'reference locked' if ref['approved'] else 'reference not uploaded yet'}"
+                    )
+
             st.markdown("### Frame prompt")
-            st.caption("Use this to generate the still image.")
-            st.code(scene.get("frame_prompt") or "", wrap_lines=True)
+            st.caption(
+                "Use this complete prompt to generate the still image. "
+                "It automatically includes the continuity locks for this scene."
+            )
+            st.code(scene_package.get("frame_prompt") or "", wrap_lines=True)
 
             st.markdown("### Video prompt")
-            st.caption("Use this to animate the approved frame.")
-            st.code(scene.get("video_prompt") or "", wrap_lines=True)
+            st.caption(
+                "Use this after the still frame is approved. "
+                "It preserves the start → action → end movement logic."
+            )
+            st.code(scene_package.get("video_prompt") or "", wrap_lines=True)
 
             with st.expander("Physical rules and things that must not happen"):
                 constraints = scene.get("physical_constraints", [])
@@ -891,12 +949,225 @@ with nav[3]:
                     for item in negatives:
                         st.write("•", item)
 
+            st.divider()
+            st.markdown("### Check the generated frame")
+            st.write(
+                "After you generate the still image in Flow, upload it here. "
+                "ToonScripture will compare it with the scene and Visual Bible before you animate it."
+            )
+
+            frame_upload = st.file_uploader(
+                "Upload generated frame",
+                type=["png", "jpg", "jpeg", "webp"],
+                key=f"scene_frame_{project['id']}_{selected_label}",
+            )
+
+            if frame_upload and st.button(
+                "Check this frame",
+                type="primary",
+                use_container_width=True,
+                key=f"review_frame_{project['id']}_{selected_label}",
+            ):
+                if not _api_key():
+                    st.error("Connect AI from the sidebar first.")
+                else:
+                    with st.spinner("Checking identity, scene accuracy and physical logic..."):
+                        review = review_scene_frame(
+                            project["id"],
+                            scene,
+                            frame_upload.getvalue(),
+                            frame_upload.type or "image/png",
+                        )
+
+                        save_project_asset(
+                            project_id=project["id"],
+                            asset_type="scene_frame",
+                            name=selected_label,
+                            file_bytes=frame_upload.getvalue(),
+                            filename=frame_upload.name,
+                            content_type=frame_upload.type or "image/png",
+                            metadata={
+                                "scene_number": scene.get("scene_number"),
+                                "scene_title": scene.get("scene_title"),
+                                "continuity_review": review,
+                            },
+                        )
+
+                    st.session_state[
+                        f"review_result_{project['id']}_{selected_label}"
+                    ] = review
+
+            review = st.session_state.get(
+                f"review_result_{project['id']}_{selected_label}"
+            )
+
+            if review:
+                verdict = review.get("verdict", "")
+                score = review.get("overall_score")
+
+                if verdict == "approved":
+                    st.success(
+                        f"Approved for animation"
+                        + (f" · {score}/100" if score is not None else "")
+                    )
+                elif verdict == "minor_fix":
+                    st.warning(
+                        f"Almost there — make a small fix"
+                        + (f" · {score}/100" if score is not None else "")
+                    )
+                else:
+                    st.error(
+                        f"Regenerate this frame"
+                        + (f" · {score}/100" if score is not None else "")
+                    )
+
+                for problem in review.get("problems", []):
+                    st.write("•", problem)
+
+                if review.get("regeneration_instruction"):
+                    st.markdown("**What to change**")
+                    st.code(
+                        review["regeneration_instruction"],
+                        wrap_lines=True,
+                    )
+
+
+# =========================================================
+# AUDIO
+# =========================================================
+
+with nav[4]:
+    if not project:
+        st.info("Choose an episode first.")
+    elif not project.get("script_json"):
+        st.info("Finish the script first.")
+    else:
+        st.header("Narration Audio")
+        st.write(
+            "Turn the finished script into a voiceover you can take straight into your edit."
+        )
+
+        full_narration = narration_text(project["id"])
+
+        if not full_narration:
+            st.info("The script does not contain narration yet.")
+        else:
+            st.metric(
+                "Narration length",
+                f"{len(full_narration.split()):,} words",
+            )
+
+            with st.expander("Preview narration text"):
+                st.write(full_narration)
+
+            voices = list_tts_voices()
+            voice_names = []
+            voice_lookup = {}
+
+            for voice in voices:
+                voice_id = (
+                    voice.get("id")
+                    or voice.get("name")
+                    or voice.get("voice_id")
+                    or "Algenib"
+                )
+                display = (
+                    voice.get("display_name")
+                    or voice.get("displayName")
+                    or voice_id
+                )
+                voice_names.append(display)
+                voice_lookup[display] = voice_id
+
+            preferred_index = (
+                voice_names.index("Algenib")
+                if "Algenib" in voice_names
+                else 0
+            )
+
+            selected_voice = st.selectbox(
+                "Narrator voice",
+                voice_names,
+                index=preferred_index,
+                help="Algenib is the recommended starting voice for ToonScripture.",
+            )
+
+            voice_direction = st.text_area(
+                "Voice direction",
+                value=(
+                    "Warm cinematic storyteller for a family audience. "
+                    "Calm authority, clear diction, emotionally dynamic through suspense, "
+                    "reflection, wonder and victory. Never robotic, frightening, preachy "
+                    "or like a movie-trailer announcer."
+                ),
+                height=120,
+            )
+
+            if st.button(
+                "Create narration audio",
+                type="primary",
+                use_container_width=True,
+            ):
+                if not _api_key():
+                    st.error("Connect AI from the sidebar first.")
+                else:
+                    with st.spinner("Creating narration audio..."):
+                        audio_bytes = generate_tts_bytes(
+                            full_narration,
+                            voice_id=voice_lookup[selected_voice],
+                            style_instruction=voice_direction,
+                        )
+
+                        saved_audio = save_project_asset(
+                            project_id=project["id"],
+                            asset_type="narration_audio",
+                            name="Narration",
+                            file_bytes=audio_bytes,
+                            filename=f"{project['id']}_narration.wav",
+                            content_type="audio/wav",
+                            metadata={
+                                "voice": voice_lookup[selected_voice],
+                                "voice_direction": voice_direction,
+                            },
+                        )
+
+                    st.session_state[
+                        f"latest_audio_{project['id']}"
+                    ] = audio_bytes
+                    st.success("Narration audio created and saved.")
+
+            latest_audio = st.session_state.get(
+                f"latest_audio_{project['id']}"
+            )
+
+            if latest_audio:
+                st.audio(latest_audio, format="audio/wav")
+                st.download_button(
+                    "Download narration audio",
+                    data=latest_audio,
+                    file_name=f"{project['story_name']}_narration.wav",
+                    mime="audio/wav",
+                    use_container_width=True,
+                )
+
+            saved_audio_files = list_project_assets(
+                project["id"],
+                "narration_audio",
+            )
+
+            if saved_audio_files:
+                latest = saved_audio_files[0]
+                url = signed_asset_url(latest.get("storage_path"))
+                if url and not latest_audio:
+                    st.markdown("### Latest saved narration")
+                    st.audio(url)
+
 
 # =========================================================
 # YOUTUBE
 # =========================================================
 
-with nav[4]:
+with nav[5]:
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("script_json"):
@@ -958,3 +1229,191 @@ with nav[4]:
             if pinned:
                 st.markdown("### Pinned comment")
                 st.code(pinned, wrap_lines=True)
+
+        st.divider()
+        st.markdown("## After you publish")
+        st.write(
+            "Come back with the YouTube numbers. ToonScripture will keep a history "
+            "so each new episode can learn from what actually worked."
+        )
+
+        with st.expander("Record performance"):
+            m1, m2 = st.columns(2)
+            with m1:
+                views = st.number_input(
+                    "Views",
+                    min_value=0,
+                    value=0,
+                    step=100,
+                    key=f"views_{project['id']}",
+                )
+                impressions = st.number_input(
+                    "Impressions",
+                    min_value=0,
+                    value=0,
+                    step=100,
+                    key=f"impressions_{project['id']}",
+                )
+                ctr = st.number_input(
+                    "Click-through rate (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=0.0,
+                    step=0.1,
+                    key=f"ctr_{project['id']}",
+                )
+            with m2:
+                avd = st.number_input(
+                    "Average view duration (seconds)",
+                    min_value=0,
+                    value=0,
+                    step=10,
+                    key=f"avd_{project['id']}",
+                )
+                apv = st.number_input(
+                    "Average percentage viewed (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=0.0,
+                    step=0.1,
+                    key=f"apv_{project['id']}",
+                )
+                subs = st.number_input(
+                    "Subscribers gained",
+                    min_value=0,
+                    value=0,
+                    step=1,
+                    key=f"subs_{project['id']}",
+                )
+
+            metric_notes = st.text_area(
+                "What did you notice?",
+                placeholder="Example: viewers dropped during the palace explanation, thumbnail performed well...",
+                key=f"metric_notes_{project['id']}",
+            )
+
+            if st.button(
+                "Save performance",
+                use_container_width=True,
+                key=f"save_metrics_{project['id']}",
+            ):
+                save_episode_metrics(
+                    project_id=project["id"],
+                    views=int(views),
+                    impressions=int(impressions),
+                    ctr=float(ctr),
+                    average_view_duration_seconds=int(avd),
+                    average_percentage_viewed=float(apv),
+                    subscribers_gained=int(subs),
+                    notes=metric_notes,
+                )
+                st.success("Performance saved.")
+
+        history = list_episode_metrics(project["id"])
+        if history:
+            latest_metrics = history[0]
+            st.caption("Latest saved performance")
+            h1, h2, h3 = st.columns(3)
+            h1.metric("Views", f"{latest_metrics.get('views') or 0:,}")
+            h2.metric("CTR", f"{latest_metrics.get('ctr') or 0:.1f}%")
+            h3.metric(
+                "Avg. viewed",
+                f"{latest_metrics.get('average_percentage_viewed') or 0:.1f}%",
+            )
+
+
+# =========================================================
+# EXPORT
+# =========================================================
+
+with nav[6]:
+    if not project:
+        st.info("Choose an episode first.")
+    else:
+        st.header("Export Project")
+        st.write(
+            "Take a clean copy of the episode with you for CapCut, archiving or backup."
+        )
+
+        bundle = {
+            "project": {
+                "id": project.get("id"),
+                "story_name": project.get("story_name"),
+                "bible_reference": project.get("bible_reference"),
+                "target_minutes": project.get("target_minutes"),
+                "format": project.get("format"),
+                "status": project.get("status"),
+            },
+            "treatment": load_json(project, "treatment_json", {}),
+            "script": load_json(project, "script_json", {}),
+            "retention_review": load_json(project, "critique_json", {}),
+            "visual_bible": load_json(project, "character_bible_json", {}),
+            "scenes": load_json(project, "scenes_json", {}),
+            "youtube_package": load_json(project, "package_json", {}),
+        }
+
+        json_bytes = json.dumps(
+            bundle,
+            indent=2,
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+        st.download_button(
+            "Download full project backup",
+            data=json_bytes,
+            file_name=f"{project['story_name']}_toonscripture.json",
+            mime="application/json",
+            type="primary",
+            use_container_width=True,
+        )
+
+        scene_data = bundle["scenes"]
+        scene_list = scene_data.get("scenes", []) if isinstance(scene_data, dict) else []
+
+        lines = [
+            f"TOONSCRIPTURE PRODUCTION PACK",
+            f"Story: {project['story_name']}",
+            f"Bible: {project.get('bible_reference') or ''}",
+            f"Target runtime: {project.get('target_minutes')} minutes",
+            "",
+        ]
+
+        script = bundle["script"]
+        if script:
+            lines += ["NARRATION SCRIPT", "=" * 60, narration_text(project["id"]), ""]
+
+        if scene_list:
+            lines += ["SCENE PROMPTS", "=" * 60]
+            for scene in scene_list:
+                package = compose_scene_package(project["id"], scene)
+                lines += [
+                    f"SCENE {scene.get('scene_number', '')}: {scene.get('scene_title', '')}",
+                    "",
+                    "NARRATION:",
+                    str(scene.get("narration") or ""),
+                    "",
+                    "FRAME PROMPT:",
+                    package.get("frame_prompt") or "",
+                    "",
+                    "VIDEO PROMPT:",
+                    package.get("video_prompt") or "",
+                    "",
+                    "-" * 60,
+                    "",
+                ]
+
+        production_text = "\n".join(lines).encode("utf-8")
+
+        st.download_button(
+            "Download production text for editing",
+            data=production_text,
+            file_name=f"{project['story_name']}_production_pack.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
+        st.caption(
+            "Your working data is also saved in the cloud database. "
+            "These downloads are portable copies for your own archive."
+        )
+
