@@ -183,6 +183,8 @@ def _local_init_db():
             playlist_series TEXT,
             notes TEXT,
             source_url TEXT,
+            production_status TEXT DEFAULT 'not_started',
+            completed_at TEXT,
             imported_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
@@ -887,6 +889,68 @@ def get_catalog_person(person_id):
     ).fetchone()
     con.close()
     return _local_row(row)
+
+
+def set_catalog_production_status(person_id, status):
+    allowed = {"not_started", "in_progress", "completed"}
+    if status not in allowed:
+        raise ValueError("Invalid production status.")
+
+    if using_supabase():
+        payload = {
+            "production_status": status,
+            "completed_at": None,
+        }
+        if status == "completed":
+            from datetime import datetime, timezone
+            payload["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+        (
+            _client()
+            .table("catalog_people")
+            .update(payload)
+            .eq("id", person_id)
+            .execute()
+        )
+        return
+
+    con = _local_connect()
+    con.execute(
+        """
+        UPDATE catalog_people
+        SET production_status=?,
+            completed_at=CASE
+              WHEN ?='completed' THEN CURRENT_TIMESTAMP
+              ELSE NULL
+            END,
+            updated_at=CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (status, status, person_id),
+    )
+    con.commit()
+    con.close()
+
+
+def catalog_progress_summary():
+    rows = list_catalog_people(limit=5000)
+    total = len(rows)
+    completed = sum(
+        1 for row in rows
+        if row.get("production_status") == "completed"
+    )
+    in_progress = sum(
+        1 for row in rows
+        if row.get("production_status") == "in_progress"
+    )
+    not_started = max(total - completed - in_progress, 0)
+
+    return {
+        "total": total,
+        "completed": completed,
+        "in_progress": in_progress,
+        "not_started": not_started,
+    }
 
 
 def link_project(
