@@ -437,96 +437,55 @@ def generate_tts_bytes(
         "gemini-3.8-flash-tts",
     )
 
-    prompt = text
-    if style_instruction:
-        prompt = (
-            f"Voice direction: {style_instruction}\n\n"
-            f"Narration:\n{text}"
-        )
+    parts = [
+        {
+            "text": text,
+            "speech_metadata": {
+                "style": (
+                    style_instruction
+                    or "Warm cinematic storyteller with clear diction."
+                )
+            },
+        }
+    ]
 
-    interaction = client.interactions.create(
+    response = client.models.generate_content(
         model=model,
-        input=prompt,
-        response_format={"type": "audio"},
-        voice=voice_id,
+        contents=[
+            {
+                "role": "user",
+                "parts": parts,
+            }
+        ],
+        config={
+            "response_modalities": ["AUDIO"],
+            "speech_config": {
+                "voice_config": {
+                    "voice": voice_id,
+                }
+            },
+        },
     )
 
-    if getattr(interaction, "output_audio", None):
-        return bytes(interaction.output_audio)
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        raise RuntimeError(
+            "The TTS request finished, but no audio candidate was returned."
+        )
 
-    if getattr(interaction, "audio", None):
-        return bytes(interaction.audio)
+    content = getattr(candidates[0], "content", None)
+    response_parts = getattr(content, "parts", None) or []
 
-    output = getattr(interaction, "output", None)
-    if isinstance(output, (bytes, bytearray)):
-        return bytes(output)
+    for part in response_parts:
+        inline_data = getattr(part, "inline_data", None)
+        data = getattr(inline_data, "data", None)
+        if data:
+            if isinstance(data, str):
+                import base64
+                return base64.b64decode(data)
+            return bytes(data)
 
     raise RuntimeError(
         "The TTS request finished, but no audio file was returned."
     )
-
-def review_scene_frame(project_id, scene, image_bytes, mime_type):
-    key = _api_key()
-    if not key:
-        raise RuntimeError(
-            "AI is not connected yet. Add a Gemini API key from the app."
-        )
-
-    from google import genai
-    from google.genai import types
-
-    project = get_project(project_id)
-    bible = load_json(project, "character_bible_json", {}) if project else {}
-
-    prompt = f"""
-You are ToonScripture's visual continuity supervisor.
-
-Review the supplied generated frame against the intended scene and the Character/World Bible.
-
-SCENE:
-{json.dumps(scene, indent=2)}
-
-CHARACTER / WORLD BIBLE:
-{json.dumps(bible, indent=2)}
-
-Judge only what can reasonably be seen in the image.
-
-Return JSON:
-{{
-  "verdict": "approved" | "minor_fix" | "regenerate",
-  "overall_score": 0,
-  "identity_score": 0,
-  "scene_accuracy_score": 0,
-  "environment_score": 0,
-  "physical_logic_score": 0,
-  "technical_quality_score": 0,
-  "what_matches": [],
-  "problems": [],
-  "regeneration_instruction": ""
-}}
-
-Use "approved" only when the frame is safe to continue.
-Use "minor_fix" when the concept is correct but a small visible issue should be corrected.
-Use "regenerate" when identity, scene action, spatial logic, environment, costume, prop, anatomy, or composition materially conflicts with the intended scene.
-"""
-
-    client = genai.Client(api_key=key)
-    preferred = os.getenv("GEMINI_VISION_MODEL", "gemini-3.8-flash")
-
-    response = client.models.generate_content(
-        model=preferred,
-        contents=[
-            prompt,
-            types.Part.from_bytes(
-                data=image_bytes,
-                mime_type=mime_type,
-            ),
-        ],
-        config=types.GenerateContentConfig(
-            temperature=0.1,
-            response_mime_type="application/json",
-        ),
-    )
-
-    return _extract_json(response.text)
 
