@@ -406,6 +406,99 @@ def load_json(project, field, default=None):
 
 
 # -------------------------------------------------------------------
+# GENERIC PROJECT ASSETS
+# -------------------------------------------------------------------
+
+def save_project_asset(
+    project_id,
+    asset_type,
+    name,
+    file_bytes,
+    filename,
+    content_type="application/octet-stream",
+    metadata=None,
+):
+    if not using_supabase():
+        raise RuntimeError("Cloud storage is required for project assets.")
+
+    client = _client()
+
+    ext = ""
+    if "." in filename:
+        ext = "." + filename.rsplit(".", 1)[1].lower()
+
+    safe_name = _slug(name)
+    path = (
+        f"{_slug(project_id)}/"
+        f"{_slug(asset_type)}/"
+        f"{safe_name}-{uuid.uuid4().hex[:10]}{ext}"
+    )
+
+    (
+        client.storage
+        .from_("toonscripture-assets")
+        .upload(
+            path=path,
+            file=file_bytes,
+            file_options={
+                "content-type": content_type,
+                "upsert": "false",
+            },
+        )
+    )
+
+    payload = {
+        "project_id": project_id,
+        "asset_type": asset_type,
+        "name": name,
+        "storage_path": path,
+        "metadata_json": metadata or {},
+    }
+
+    result = (
+        client.table("project_assets")
+        .insert(payload)
+        .execute()
+    )
+
+    return result.data[0] if result.data else payload
+
+
+def list_project_assets(project_id, asset_type=None):
+    if not using_supabase():
+        return []
+
+    query = (
+        _client()
+        .table("project_assets")
+        .select("*")
+        .eq("project_id", project_id)
+    )
+
+    if asset_type:
+        query = query.eq("asset_type", asset_type)
+
+    result = query.order("created_at", desc=True).execute()
+    return result.data or []
+
+
+def signed_asset_url(storage_path, expires_in=3600):
+    if not using_supabase() or not storage_path:
+        return None
+
+    signed = (
+        _client().storage
+        .from_("toonscripture-assets")
+        .create_signed_url(storage_path, expires_in)
+    )
+
+    if isinstance(signed, dict):
+        return signed.get("signedURL") or signed.get("signed_url")
+
+    return None
+
+
+# -------------------------------------------------------------------
 # REFERENCE ASSETS
 # -------------------------------------------------------------------
 
