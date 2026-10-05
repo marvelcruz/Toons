@@ -214,27 +214,10 @@ with st.sidebar:
         if _api_key():
             st.success("AI tools are connected", icon="✅")
         else:
-            st.markdown("**AI connection**")
-            st.caption(
-                "Only add this if ToonScripture asks you to connect the AI tools."
+            st.warning(
+                "AI is not configured on the server yet. "
+                "Once it is configured, you will not need to paste an API key into ToonScripture."
             )
-            gemini_key = st.text_input(
-                "Gemini API key",
-                type="password",
-                key="gemini_key_input",
-                label_visibility="collapsed",
-                placeholder="Paste Gemini API key",
-            )
-            if st.button(
-                "Connect AI",
-                use_container_width=True,
-                key="connect_ai_settings",
-            ):
-                if gemini_key.strip():
-                    st.session_state.gemini_api_key = gemini_key.strip()
-                    st.rerun()
-                else:
-                    st.warning("Paste the API key first.")
 
 
 
