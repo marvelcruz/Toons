@@ -406,6 +406,146 @@ def load_json(project, field, default=None):
 
 
 # -------------------------------------------------------------------
+# REFERENCE ASSETS
+# -------------------------------------------------------------------
+
+def _slug(value):
+    value = str(value or "").strip().lower()
+    safe = []
+    for ch in value:
+        if ch.isalnum():
+            safe.append(ch)
+        elif ch in (" ", "-", "_"):
+            safe.append("-")
+    slug = "".join(safe)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "reference"
+
+
+def save_reference_asset(
+    project_id,
+    reference_type,
+    name,
+    file_bytes,
+    filename,
+    content_type="application/octet-stream",
+    master_prompt=None,
+    identity_lock=None,
+    negative_lock=None,
+):
+    if not using_supabase():
+        raise RuntimeError("Reference uploads require the cloud database.")
+
+    client = _client()
+
+    ext = ""
+    if "." in filename:
+        ext = "." + filename.rsplit(".", 1)[1].lower()
+
+    path = (
+        f"{_slug(project_id)}/"
+        f"{_slug(reference_type)}/"
+        f"{_slug(name)}-{uuid.uuid4().hex[:10]}{ext}"
+    )
+
+    (
+        client.storage
+        .from_("toonscripture-assets")
+        .upload(
+            path=path,
+            file=file_bytes,
+            file_options={
+                "content-type": content_type,
+                "upsert": "false",
+            },
+        )
+    )
+
+    payload = {
+        "project_id": project_id,
+        "reference_type": reference_type,
+        "name": name,
+        "status": "approved",
+        "master_prompt": master_prompt,
+        "identity_lock": identity_lock,
+        "negative_lock": negative_lock,
+        "image_path": path,
+        "metadata_json": {
+            "original_filename": filename,
+            "content_type": content_type,
+        },
+    }
+
+    (
+        client.table("references_library")
+        .upsert(
+            payload,
+            on_conflict="project_id,reference_type,name",
+        )
+        .execute()
+    )
+
+    return payload
+
+
+def get_reference_asset(project_id, reference_type, name):
+    if not using_supabase():
+        return None
+
+    result = (
+        _client()
+        .table("references_library")
+        .select("*")
+        .eq("project_id", project_id)
+        .eq("reference_type", reference_type)
+        .eq("name", name)
+        .limit(1)
+        .execute()
+    )
+
+    if not result.data:
+        return None
+
+    item = result.data[0]
+
+    if item.get("image_path"):
+        try:
+            signed = (
+                _client().storage
+                .from_("toonscripture-assets")
+                .create_signed_url(
+                    item["image_path"],
+                    3600,
+                )
+            )
+            if isinstance(signed, dict):
+                item["signed_url"] = (
+                    signed.get("signedURL")
+                    or signed.get("signed_url")
+                )
+        except Exception:
+            pass
+
+    return item
+
+
+def list_reference_assets(project_id):
+    if not using_supabase():
+        return []
+
+    result = (
+        _client()
+        .table("references_library")
+        .select("*")
+        .eq("project_id", project_id)
+        .order("reference_type")
+        .execute()
+    )
+    return result.data or []
+
+
+# -------------------------------------------------------------------
 # CATALOGUE
 # -------------------------------------------------------------------
 
