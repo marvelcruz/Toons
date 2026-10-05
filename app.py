@@ -331,6 +331,11 @@ with nav[0]:
             limit=1000,
         )
 
+        rows = [
+            row for row in rows
+            if (row.get("production_status") or "not_started") != "completed"
+        ]
+
         if rows:
             choices = {
                 row["id"]: (
