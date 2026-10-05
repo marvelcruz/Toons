@@ -20,9 +20,6 @@ from db import (
     save_episode_metrics,
     list_episode_metrics,
     using_supabase,
-    auth_sign_in,
-    auth_restore,
-    auth_sign_out,
 )
 from workflow import (
     develop_treatment,
@@ -49,60 +46,13 @@ init_db()
 
 
 # =========================================================
-# SIGN IN
+# CLOUD WORKSPACE
 # =========================================================
 
 if using_supabase():
-    if st.session_state.get("auth_access_token") and st.session_state.get("auth_refresh_token"):
-        try:
-            restored = auth_restore(
-                st.session_state.auth_access_token,
-                st.session_state.auth_refresh_token,
-            )
-            st.session_state.auth_access_token = restored["access_token"]
-            st.session_state.auth_refresh_token = restored["refresh_token"]
-            st.session_state.auth_email = restored.get("email")
-        except Exception:
-            for key in [
-                "auth_access_token",
-                "auth_refresh_token",
-                "auth_email",
-            ]:
-                st.session_state.pop(key, None)
-
-    if not st.session_state.get("auth_access_token"):
-        st.title("🎬 ToonScripture")
-        st.subheader("Welcome back")
-        st.write(
-            "Sign in to open your Bible-story production workspace. "
-            "Your projects, scripts and production progress are saved securely online."
-        )
-
-        with st.form("login_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            submit = st.form_submit_button(
-                "Sign in to ToonScripture",
-                type="primary",
-                use_container_width=True,
-            )
-
-        if submit:
-            try:
-                session = auth_sign_in(email, password)
-                st.session_state.auth_access_token = session["access_token"]
-                st.session_state.auth_refresh_token = session["refresh_token"]
-                st.session_state.auth_email = session.get("email")
-                st.rerun()
-            except Exception as exc:
-                st.error("We couldn't sign you in. Check your email and password and try again.")
-
-        st.stop()
-
-    # First successful cloud sign-in automatically restores the planning catalogue.
     try:
         seed_catalog_if_empty()
-    except Exception as exc:
+    except Exception:
         st.warning(
             "Your workspace opened, but the story catalogue could not be prepared automatically. "
             "You can still upload the planning spreadsheet from Home."
@@ -273,22 +223,7 @@ with st.sidebar:
             else:
                 st.warning("Paste your Gemini API key first.")
 
-    if using_supabase():
-        if st.session_state.get("auth_email"):
-            st.caption(f"Signed in as {st.session_state.auth_email}")
-        if st.button("Sign out", use_container_width=True):
-            auth_sign_out(
-                st.session_state.get("auth_access_token"),
-                st.session_state.get("auth_refresh_token"),
-            )
-            for key in [
-                "auth_access_token",
-                "auth_refresh_token",
-                "auth_email",
-                "project_id",
-            ]:
-                st.session_state.pop(key, None)
-            st.rerun()
+
 
 
 # =========================================================
