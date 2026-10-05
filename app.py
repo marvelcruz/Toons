@@ -1,532 +1,795 @@
-import os
-import json
 import streamlit as st
 
 from db import (
-    init_db, list_projects, get_project, create_project, load_json,
-    catalog_summary, list_catalog_people, list_series, link_project,
+    init_db,
+    list_projects,
+    get_project,
+    create_project,
+    load_json,
+    catalog_summary,
+    list_catalog_people,
+    list_series,
+    link_project,
     import_spreadsheet,
 )
 from workflow import (
-    develop_treatment, draft_script, critique_script,
-    build_character_bible, plan_scenes, make_package,
+    develop_treatment,
+    draft_script,
+    critique_script,
+    build_character_bible,
+    plan_scenes,
+    make_package,
 )
 
-st.set_page_config(page_title="ToonScripture OS", page_icon="🎬", layout="wide")
+st.set_page_config(
+    page_title="ToonScripture OS",
+    page_icon="🎬",
+    layout="wide",
+)
+
 init_db()
 
 
-def pretty(value):
-    return str(value or "").replace("_", " ").title()
+# =========================================================
+# HELPERS
+# =========================================================
 
-
-def safe_json(data):
-    if data:
-        with st.expander("See full details"):
-            st.json(data)
-
-
-def render_script(script):
-    if not script:
-        st.info("The script has not been created yet.")
-        return
-    hook = script.get("hook")
-    if hook:
-        st.markdown("### Opening")
-        st.write(hook)
-    for i, section in enumerate(script.get("sections", []), 1):
-        name = section.get("name") or f"Section {i}"
-        with st.expander(name, expanded=i == 1):
-            if section.get("purpose"):
-                st.caption(section["purpose"])
-            if section.get("narration"):
-                st.write(section["narration"])
-            dialogue = section.get("dialogue")
-            if dialogue:
-                st.markdown("**Dialogue**")
-                for line in dialogue if isinstance(dialogue, list) else [dialogue]:
-                    st.write(line)
-
-
-def stage_status(project):
-    return [
-        ("Treatment", bool(project.get("treatment_json"))),
-        ("Script", bool(project.get("script_json"))),
-        ("Review", bool(project.get("critique_json"))),
-        ("Visual Bible", bool(project.get("character_bible_json"))),
-        ("Scenes", bool(project.get("scenes_json"))),
-        ("YouTube Pack", bool(project.get("package_json"))),
+def project_progress(project):
+    checks = [
+        bool(project.get("treatment_json")),
+        bool(project.get("script_json")),
+        bool(project.get("critique_json")),
+        bool(project.get("character_bible_json")),
+        bool(project.get("scenes_json")),
+        bool(project.get("package_json")),
     ]
+    return sum(checks), len(checks)
 
 
-def current_project_selector():
+def next_step(project):
+    if not project:
+        return "Choose a story and create an episode."
+    if not project.get("treatment_json"):
+        return "Create the story treatment."
+    if not project.get("script_json"):
+        return "Write the narration script."
+    if not project.get("critique_json"):
+        return "Run the retention review."
+    if not project.get("character_bible_json"):
+        return "Build the Visual Bible so characters and locations stay consistent."
+    if not project.get("scenes_json"):
+        return "Break the episode into production scenes."
+    if not project.get("package_json"):
+        return "Create the YouTube title, thumbnail direction and description."
+    return "This episode is fully prepared for production and publishing."
+
+
+def render_project_card(project):
+    if not project:
+        st.info("No episode selected yet.")
+        return
+
+    done, total = project_progress(project)
+
+    st.markdown(f"### {project['story_name']}")
+    st.caption(
+        f"{project.get('bible_reference') or 'Bible reference not set'} · "
+        f"{project.get('target_minutes', 0)} min"
+    )
+    st.progress(done / total, text=f"{done} of {total} preparation stages complete")
+
+    st.markdown("**What should I do next?**")
+    st.write(next_step(project))
+
+
+def show_script(script):
+    if not script:
+        st.info("The script has not been written yet.")
+        return
+
+    if script.get("hook"):
+        st.markdown("### Opening hook")
+        st.write(script["hook"])
+
+    sections = script.get("sections", [])
+    if sections:
+        labels = [
+            section.get("name") or f"Section {i + 1}"
+            for i, section in enumerate(sections)
+        ]
+        selected = st.selectbox(
+            "Choose a script section",
+            labels,
+            key="script_section_selector",
+        )
+        section = sections[labels.index(selected)]
+
+        st.markdown(f"### {selected}")
+
+        if section.get("purpose"):
+            st.caption(section["purpose"])
+
+        if section.get("narration"):
+            st.write(section["narration"])
+
+        dialogue = section.get("dialogue")
+        if dialogue:
+            st.markdown("**Dialogue**")
+            for line in dialogue if isinstance(dialogue, list) else [dialogue]:
+                st.write(line)
+
+
+def current_project():
     projects = list_projects()
     if not projects:
         return None
 
+    ids = [p["id"] for p in projects]
     labels = {
-        p["id"]: f"{p['story_name']} · {p['target_minutes']} min"
+        p["id"]: f"{p['story_name']} · {p.get('target_minutes', 0)} min"
         for p in projects
     }
-    ids = [p["id"] for p in projects]
 
     preferred = st.session_state.get("project_id")
     index = ids.index(preferred) if preferred in ids else 0
+
     chosen = st.selectbox(
-        "Current episode",
+        "Episode",
         ids,
         index=index,
         format_func=lambda pid: labels[pid],
         label_visibility="collapsed",
     )
+
     st.session_state.project_id = chosen
     return get_project(chosen)
 
 
-# -------------------------
+# =========================================================
 # SIDEBAR
-# -------------------------
+# =========================================================
+
 with st.sidebar:
-    st.markdown("# ToonScripture")
+    st.markdown("# 🎬 ToonScripture")
     st.caption("Cinematic Bible Story Studio")
     st.divider()
 
-    project = current_project_selector()
+    project = current_project()
 
     if project:
+        done, total = project_progress(project)
         st.markdown(f"**{project['story_name']}**")
-        st.caption(f"{project['bible_reference']} · {project['target_minutes']} min")
-        completed = sum(1 for _, ok in stage_status(project) if ok)
-        st.progress(completed / 6, text=f"{completed}/6 production stages ready")
-
-        with st.expander("Episode details"):
-            st.write("Type:", pretty(project["format"]))
-            st.write("Status:", pretty(project["status"]))
-            st.write("Project:", project["id"])
+        st.caption(
+            f"{project.get('bible_reference') or 'No reference'} · "
+            f"{project.get('target_minutes', 0)} min"
+        )
+        st.progress(done / total)
+        st.caption(f"{done}/{total} stages complete")
     else:
-        st.caption("No episode created yet.")
+        st.caption("No episode selected.")
 
     st.divider()
-    try:
-        from workflow import _api_key
-        if _api_key():
-            st.success("Gemini connected", icon="✅")
-        else:
-            st.warning("Gemini key not added yet")
-    except Exception:
-        pass
+    st.caption("You can move between sections at any time.")
 
 
-# -------------------------
+# =========================================================
 # HEADER
-# -------------------------
+# =========================================================
+
 st.title("ToonScripture OS")
-st.caption("Choose the story → build the episode → lock the look → create the scenes → package for YouTube")
+st.caption(
+    "A simple workspace for turning a Bible story into a cinematic YouTube episode."
+)
 
-tabs = st.tabs(["Home", "Episode", "Visual Bible", "Production", "Publish"])
+nav = st.tabs(
+    [
+        "🏠 Home",
+        "✍️ Story & Script",
+        "🎨 Visual Bible",
+        "🎞️ Scene Production",
+        "📺 YouTube",
+    ]
+)
 
 
-# -------------------------
+# =========================================================
 # HOME
-# -------------------------
-with tabs[0]:
-    st.header("What do you want to make next?")
+# =========================================================
+
+with nav[0]:
+    st.header("What would you like to do?")
+
+    if project:
+        st.markdown("## Continue your current episode")
+        render_project_card(project)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.button(
+                "Continue building this episode",
+                type="primary",
+                use_container_width=True,
+                disabled=False,
+            )
+        with c2:
+            st.caption(
+                "Use the tabs above to open the exact part you want. "
+                "Nothing is locked behind a production line."
+            )
+
+        st.divider()
 
     summary = catalog_summary()
 
     if summary["people_total"] == 0:
-        st.info(
-            "Your story catalogue is not in this database yet. "
-            "Upload the ToonScripture planning spreadsheet once and the app will store it in the database."
+        st.markdown("## Add your story catalogue")
+        st.write(
+            "Upload your ToonScripture planning spreadsheet once. "
+            "After that, the stories will live in the database and you will not need the spreadsheet for daily use."
         )
-        uploaded = st.file_uploader(
-            "Upload Bible cinematic production spreadsheet",
+
+        upload = st.file_uploader(
+            "Choose the planning spreadsheet",
             type=["xlsx"],
             key="catalog_upload",
         )
-        if uploaded and st.button("Import my catalogue", type="primary"):
-            with st.spinner("Importing your catalogue..."):
-                result = import_spreadsheet(uploaded.getvalue())
+
+        if upload and st.button(
+            "Import my story catalogue",
+            type="primary",
+            use_container_width=True,
+        ):
+            with st.spinner("Adding your stories to ToonScripture..."):
+                result = import_spreadsheet(upload.getvalue())
+
             st.success(
-                f"Imported {result['people_total']} people and {result['series_total']} series."
+                f"Done. {result['people_total']} story/character entries "
+                f"and {result['series_total']} series were added."
             )
             st.rerun()
-    else:
-        a, b, c, d = st.columns(4)
-        a.metric("Stories / characters", summary["people_total"])
-        b.metric("High priority", summary["high_priority"])
-        c.metric("Women", summary["women_total"])
-        d.metric("Men", summary["men_total"])
 
-        st.markdown("### Find a story")
-        search = st.text_input(
-            "Search",
-            placeholder="Try Daniel, Esther, Moses, lions' den...",
-            label_visibility="collapsed",
+    else:
+        st.markdown("## Start a new episode")
+        st.write(
+            "Search for the Bible person or story you want to work on. "
+            "Then give the episode a specific title."
         )
 
-        with st.expander("Optional filters"):
-            c1, c2 = st.columns(2)
-            with c1:
-                priority = st.selectbox("Priority", ["All", "High", "Medium", "Low"])
-            with c2:
-                people_type = st.selectbox("People", ["All", "Men", "Women"])
-
-        entity_type = ""
-        if people_type == "Men":
-            entity_type = "man"
-        elif people_type == "Women":
-            entity_type = "woman"
+        search = st.text_input(
+            "Search the catalogue",
+            placeholder="Example: Daniel, Esther, Moses, Ruth...",
+        )
 
         rows = list_catalog_people(
             search=search,
-            priority="" if priority == "All" else priority,
-            entity_type=entity_type,
-            limit=40,
+            limit=30,
         )
 
-        if not rows:
-            st.warning("No catalogue entry matches that search.")
-        else:
+        if rows:
+            choices = {
+                row["id"]: (
+                    f"{row['name']} · "
+                    f"{row.get('bible_references') or 'Bible reference not set'}"
+                )
+                for row in rows
+            }
+
             selected_id = st.selectbox(
-                "Choose a story / character",
-                [r["id"] for r in rows],
-                format_func=lambda cid: next(
-                    f"{r['name']} · {r.get('bible_references') or 'Bible reference not set'}"
-                    for r in rows if r["id"] == cid
-                ),
+                "Choose a story or character",
+                list(choices.keys()),
+                format_func=lambda cid: choices[cid],
             )
-            selected = next(r for r in rows if r["id"] == selected_id)
 
-            st.markdown(f"## {selected['name']}")
-            left, right = st.columns([2, 1])
-            with left:
-                if selected.get("story_role"):
-                    st.write(selected["story_role"])
-                if selected.get("bible_references"):
-                    st.markdown(f"**Bible:** {selected['bible_references']}")
-                if selected.get("primary_environment"):
-                    st.markdown(f"**Main setting:** {selected['primary_environment']}")
-                if selected.get("youtube_hook"):
-                    st.markdown(f"**YouTube angle:** {selected['youtube_hook']}")
-                if selected.get("playlist_series"):
-                    st.markdown(f"**Series:** {selected['playlist_series']}")
-                if selected.get("notes"):
-                    with st.expander("Planning note"):
-                        st.write(selected["notes"])
-            with right:
-                st.metric("Priority", selected.get("priority") or "—")
-                if selected.get("cinematic_score") is not None:
-                    st.metric("Cinematic score", f"{selected['cinematic_score']:.1f}")
+            selected = next(row for row in rows if row["id"] == selected_id)
 
-            st.markdown("### Start an episode")
-            default_title = selected["name"]
+            st.markdown(f"### {selected['name']}")
+
+            if selected.get("story_role"):
+                st.write(selected["story_role"])
+
+            info1, info2, info3 = st.columns(3)
+
+            with info1:
+                st.markdown("**Bible**")
+                st.write(selected.get("bible_references") or "Not set")
+
+            with info2:
+                st.markdown("**Priority**")
+                st.write(selected.get("priority") or "Not set")
+
+            with info3:
+                st.markdown("**Series**")
+                st.write(selected.get("playlist_series") or "Not assigned")
+
+            if selected.get("primary_environment"):
+                st.markdown(
+                    f"**Main setting:** {selected['primary_environment']}"
+                )
+
+            if selected.get("youtube_hook"):
+                st.info(selected["youtube_hook"])
+
+            st.markdown("### Name this episode")
+
             episode_title = st.text_input(
                 "Episode title",
-                value=default_title,
-                help="You can make the title specific, e.g. Daniel in the Lions' Den.",
+                value=selected["name"],
+                help="Make it specific, e.g. Daniel in the Lions' Den.",
             )
-            episode_reference = st.text_input(
+
+            bible_reference = st.text_input(
                 "Bible reference",
                 value=selected.get("bible_references") or "",
             )
-            runtime = st.slider("Target runtime", 3.0, 20.0, 8.0, 0.5)
 
-            if st.button("Start this episode", type="primary", use_container_width=True):
-                pid = create_project(episode_title, episode_reference, runtime, "long_form")
-                link_project(pid, person_id=selected_id, episode_title=episode_title)
+            runtime = st.select_slider(
+                "How long should the episode be?",
+                options=[4.0, 6.0, 8.0, 10.0, 12.0, 15.0],
+                value=8.0,
+                format_func=lambda x: f"{int(x)} minutes",
+            )
+
+            if st.button(
+                "Create this episode",
+                type="primary",
+                use_container_width=True,
+            ):
+                pid = create_project(
+                    episode_title,
+                    bible_reference,
+                    runtime,
+                    "long_form",
+                )
+                link_project(
+                    pid,
+                    person_id=selected_id,
+                    episode_title=episode_title,
+                )
                 st.session_state.project_id = pid
-                st.success("Episode created. Open the Episode tab to start the treatment.")
+                st.success("Episode created.")
                 st.rerun()
+        else:
+            st.warning("No matching story was found.")
 
-        series = list_series()
-        if series:
-            with st.expander("Browse series / playlists"):
-                for item in series:
-                    st.markdown(f"**{item['series_name']}**")
-                    if item.get("core_concept"):
-                        st.write(item["core_concept"])
-                    if item.get("best_starter_episodes"):
-                        st.caption("Starter episodes: " + str(item["best_starter_episodes"]))
-                    st.divider()
+        with st.expander("Browse series ideas"):
+            for item in list_series():
+                st.markdown(f"**{item['series_name']}**")
+                if item.get("core_concept"):
+                    st.write(item["core_concept"])
+                if item.get("best_starter_episodes"):
+                    st.caption(
+                        "Good starting episodes: "
+                        + str(item["best_starter_episodes"])
+                    )
+                st.divider()
 
-    with st.expander("Create an episode manually"):
-        manual_title = st.text_input("Story title", key="manual_title")
-        manual_ref = st.text_input("Bible reference", key="manual_ref")
-        manual_minutes = st.number_input(
-            "Target minutes", min_value=2.0, max_value=30.0, value=8.0, step=0.5
+    with st.expander("Create an episode without the catalogue"):
+        manual_title = st.text_input(
+            "Story title",
+            key="manual_title",
+            placeholder="Example: Daniel in the Lions' Den",
         )
-        if st.button("Create episode", key="manual_create"):
+        manual_reference = st.text_input(
+            "Bible reference",
+            key="manual_reference",
+            placeholder="Example: Daniel 6",
+        )
+        manual_runtime = st.select_slider(
+            "Target length",
+            options=[4.0, 6.0, 8.0, 10.0, 12.0, 15.0],
+            value=8.0,
+            format_func=lambda x: f"{int(x)} minutes",
+            key="manual_runtime",
+        )
+
+        if st.button(
+            "Create manual episode",
+            use_container_width=True,
+        ):
             if not manual_title.strip():
                 st.error("Enter a story title first.")
             else:
-                pid = create_project(manual_title, manual_ref, manual_minutes, "long_form")
+                pid = create_project(
+                    manual_title,
+                    manual_reference,
+                    manual_runtime,
+                    "long_form",
+                )
                 st.session_state.project_id = pid
                 st.rerun()
 
 
-# Refresh current project after possible creation
-project = get_project(st.session_state.get("project_id")) if st.session_state.get("project_id") else None
+project = (
+    get_project(st.session_state.get("project_id"))
+    if st.session_state.get("project_id")
+    else None
+)
 
 
-# -------------------------
-# EPISODE
-# -------------------------
-with tabs[1]:
+# =========================================================
+# STORY & SCRIPT
+# =========================================================
+
+with nav[1]:
     if not project:
-        st.info("Choose or create an episode from Home first.")
+        st.info("Create or choose an episode from Home first.")
     else:
         st.header(project["story_name"])
-        st.caption(f"{project['bible_reference']} · target {project['target_minutes']} minutes")
-
-        statuses = stage_status(project)
-        cols = st.columns(6)
-        for col, (label, done) in zip(cols, statuses):
-            col.markdown(("✅ " if done else "○ ") + label)
-
-        st.divider()
-
-        st.subheader("1. Story treatment")
-        if st.button(
-            "Create treatment" if not project.get("treatment_json") else "Regenerate treatment",
-            key="make_treatment",
-        ):
-            with st.spinner("Researching and shaping the story..."):
-                develop_treatment(project["id"])
-            st.rerun()
+        st.caption(
+            "This section turns the Bible story into a strong YouTube narration."
+        )
 
         treatment = load_json(project, "treatment_json", {})
-        if treatment:
-            if treatment.get("opening_hook"):
-                st.markdown("**Opening idea**")
-                st.write(treatment["opening_hook"])
-            if treatment.get("emotional_arc"):
-                st.markdown("**Emotional arc**")
-                st.write(treatment["emotional_arc"])
-            beats = treatment.get("story_beats", [])
-            if beats:
-                st.markdown("**Story beats**")
-                for beat in beats:
-                    st.write("•", beat)
-            safe_json(treatment)
-
-        st.divider()
-
-        st.subheader("2. Script")
-        if not treatment:
-            st.caption("Create the treatment first.")
-        else:
-            if st.button(
-                "Write script" if not project.get("script_json") else "Regenerate script",
-                key="make_script",
-            ):
-                with st.spinner("Writing the episode..."):
-                    draft_script(project["id"])
-                st.rerun()
-
         script = load_json(project, "script_json", {})
-        render_script(script)
+        critique = load_json(project, "critique_json", {})
 
-        st.divider()
+        step = st.radio(
+            "Choose what you want to work on",
+            [
+                "1. Shape the story",
+                "2. Write the script",
+                "3. Check viewer retention",
+            ],
+            horizontal=True,
+        )
 
-        st.subheader("3. Retention review")
-        if script:
+        if step == "1. Shape the story":
+            st.subheader("Shape the story")
+            st.write(
+                "ToonScripture will map the key events, emotional arc, "
+                "historical context and the strongest opening."
+            )
+
             if st.button(
-                "Review the script" if not project.get("critique_json") else "Review again",
-                key="make_critique",
+                "Create story treatment"
+                if not treatment
+                else "Create a new treatment",
+                type="primary",
+                use_container_width=True,
             ):
-                with st.spinner("Checking pacing and retention..."):
-                    critique_script(project["id"])
+                with st.spinner("Shaping the story..."):
+                    develop_treatment(project["id"])
                 st.rerun()
 
-        critique = load_json(project, "critique_json", {})
-        if critique:
-            score = critique.get("score_100")
-            if score is not None:
-                st.metric("Retention score", f"{score}/100")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown("**What works**")
-                for x in critique.get("strengths", []):
-                    st.write("•", x)
-            with c2:
-                st.markdown("**What needs work**")
-                for x in critique.get("problems", []):
-                    st.write("•", x)
-            safe_json(critique)
+            if treatment:
+                if treatment.get("opening_hook"):
+                    st.markdown("### Opening idea")
+                    st.write(treatment["opening_hook"])
+
+                if treatment.get("emotional_arc"):
+                    st.markdown("### Emotional journey")
+                    st.write(treatment["emotional_arc"])
+
+                if treatment.get("story_beats"):
+                    st.markdown("### Main story moments")
+                    for beat in treatment["story_beats"]:
+                        st.write("•", beat)
+
+                with st.expander("See all treatment details"):
+                    st.json(treatment)
+
+        elif step == "2. Write the script":
+            if not treatment:
+                st.info(
+                    "Create the story treatment first so the script has a clear direction."
+                )
+            else:
+                st.subheader("Write the narration script")
+                st.write(
+                    "The script is written for cinematic narration and viewer retention."
+                )
+
+                if st.button(
+                    "Write the script"
+                    if not script
+                    else "Rewrite the script",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    with st.spinner("Writing the episode..."):
+                        draft_script(project["id"])
+                    st.rerun()
+
+                show_script(script)
+
+        else:
+            if not script:
+                st.info("Write the script first.")
+            else:
+                st.subheader("Check viewer retention")
+                st.write(
+                    "This checks the hook, pacing, repetition, emotional build and payoff."
+                )
+
+                if st.button(
+                    "Review the script"
+                    if not critique
+                    else "Review the script again",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    with st.spinner("Reviewing the script..."):
+                        critique_script(project["id"])
+                    st.rerun()
+
+                if critique:
+                    score = critique.get("score_100")
+                    if score is not None:
+                        st.metric("Retention score", f"{score}/100")
+
+                    left, right = st.columns(2)
+
+                    with left:
+                        st.markdown("### What works")
+                        for item in critique.get("strengths", []):
+                            st.write("•", item)
+
+                    with right:
+                        st.markdown("### What needs attention")
+                        for item in critique.get("problems", []):
+                            st.write("•", item)
+
+                    with st.expander("Recommended changes"):
+                        st.markdown("**Add**")
+                        for item in critique.get("recommended_additions", []):
+                            st.write("•", item)
+
+                        st.markdown("**Cut or tighten**")
+                        for item in critique.get("recommended_cuts", []):
+                            st.write("•", item)
 
 
-# -------------------------
+# =========================================================
 # VISUAL BIBLE
-# -------------------------
-with tabs[2]:
+# =========================================================
+
+with nav[2]:
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("script_json"):
-        st.info("Finish the script first. The visual bible is built from the approved story.")
+        st.info(
+            "Finish the script first. The Visual Bible is built from the approved story."
+        )
     else:
         st.header("Visual Bible")
-        st.caption(
-            "This locks the look of recurring people, uniforms, creatures, locations and props "
-            "before scene generation."
+        st.write(
+            "This keeps the same people, uniforms, creatures, locations and props "
+            "looking consistent from scene to scene."
         )
 
+        bible = load_json(project, "character_bible_json", {})
+
+        if not bible:
+            st.info(
+                "You have not created the Visual Bible for this episode yet."
+            )
+
         if st.button(
-            "Build visual bible" if not project.get("character_bible_json") else "Rebuild visual bible",
+            "Build the Visual Bible"
+            if not bible
+            else "Rebuild the Visual Bible",
             type="primary",
+            use_container_width=True,
         ):
-            with st.spinner("Building characters, groups, locations and props in four smaller passes..."):
+            with st.spinner(
+                "Building people, groups, locations and props..."
+            ):
                 build_character_bible(project["id"])
             st.rerun()
 
-        bible = load_json(project, "character_bible_json", {})
         if bible:
-            sub = st.tabs(["Main characters", "Supporting", "Groups / uniforms", "Locations", "Props"])
+            categories = {
+                "Main characters": (
+                    "characters",
+                    "master_character_prompt",
+                    "identity_lock",
+                ),
+                "Supporting characters": (
+                    "supporting_characters",
+                    "master_character_prompt",
+                    "identity_lock",
+                ),
+                "Groups & uniforms": (
+                    "character_groups",
+                    "master_group_prompt",
+                    "group_identity_lock",
+                ),
+                "Locations": (
+                    "locations",
+                    "master_environment_prompt",
+                    "environment_lock",
+                ),
+                "Props": (
+                    "props",
+                    "master_prop_prompt",
+                    None,
+                ),
+            }
 
-            sections = [
-                ("characters", "Main character"),
-                ("supporting_characters", "Supporting character"),
-                ("character_groups", "Group"),
-                ("locations", "Location"),
-                ("props", "Prop"),
-            ]
+            category = st.selectbox(
+                "What do you want to review?",
+                list(categories.keys()),
+            )
 
-            for tab, (key, label) in zip(sub, sections):
-                with tab:
-                    items = bible.get(key, [])
-                    if not items:
-                        st.caption(f"No {label.lower()} entries.")
-                        continue
-                    names = [x.get("name") or f"{label} {i+1}" for i, x in enumerate(items)]
-                    name = st.selectbox(label, names, key=f"{project['id']}_{key}")
-                    item = items[names.index(name)]
-                    st.markdown(f"### {name}")
+            key, prompt_key, lock_key = categories[category]
+            items = bible.get(key, [])
 
-                    if key in ("characters", "supporting_characters"):
-                        if item.get("role"):
-                            st.caption(item["role"])
-                        if item.get("master_character_prompt"):
-                            st.markdown("**Reference-image prompt**")
-                            st.code(item["master_character_prompt"], wrap_lines=True)
-                        if item.get("identity_lock"):
-                            st.markdown("**Identity lock**")
-                            st.code(item["identity_lock"], wrap_lines=True)
-                    elif key == "character_groups":
-                        if item.get("story_function"):
-                            st.caption(item["story_function"])
-                        if item.get("master_group_prompt"):
-                            st.markdown("**Group reference prompt**")
-                            st.code(item["master_group_prompt"], wrap_lines=True)
-                        if item.get("group_identity_lock"):
-                            st.markdown("**Group / uniform lock**")
-                            st.code(item["group_identity_lock"], wrap_lines=True)
-                        if item.get("allowed_individual_variation"):
-                            st.markdown("**Allowed variation**")
-                            for x in item["allowed_individual_variation"]:
-                                st.write("•", x)
-                    elif key == "locations":
-                        if item.get("master_environment_prompt"):
-                            st.markdown("**Environment reference prompt**")
-                            st.code(item["master_environment_prompt"], wrap_lines=True)
-                        if item.get("environment_lock"):
-                            st.markdown("**Environment lock**")
-                            st.code(item["environment_lock"], wrap_lines=True)
-                    else:
-                        if item.get("master_prop_prompt"):
-                            st.markdown("**Prop reference prompt**")
-                            st.code(item["master_prop_prompt"], wrap_lines=True)
+            if not items:
+                st.caption("No entries were created in this category.")
+            else:
+                names = [
+                    item.get("name") or f"Item {i + 1}"
+                    for i, item in enumerate(items)
+                ]
 
-                    with st.expander("All visual details"):
-                        st.json(item)
+                selected_name = st.selectbox(
+                    category,
+                    names,
+                    key=f"{project['id']}_{key}_selector",
+                )
+
+                item = items[names.index(selected_name)]
+
+                st.markdown(f"## {selected_name}")
+
+                role = (
+                    item.get("role")
+                    or item.get("story_function")
+                    or item.get("story_purpose")
+                )
+
+                if role:
+                    st.caption(role)
+
+                prompt = item.get(prompt_key)
+                if prompt:
+                    st.markdown("### Reference image prompt")
+                    st.caption(
+                        "Copy this into Google Flow to create the approved reference image."
+                    )
+                    st.code(prompt, wrap_lines=True)
+
+                if lock_key and item.get(lock_key):
+                    st.markdown("### Continuity lock")
+                    st.caption(
+                        "This description is reused in scenes so the design does not drift."
+                    )
+                    st.code(item[lock_key], wrap_lines=True)
+
+                if key == "character_groups":
+                    variation = item.get("allowed_individual_variation", [])
+                    if variation:
+                        st.markdown("### What may vary between members")
+                        for value in variation:
+                            st.write("•", value)
+
+                with st.expander("See all visual details"):
+                    st.json(item)
 
 
-# -------------------------
-# PRODUCTION
-# -------------------------
-with tabs[3]:
+# =========================================================
+# SCENE PRODUCTION
+# =========================================================
+
+with nav[3]:
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("character_bible_json"):
-        st.info("Build the Visual Bible first so scene prompts can preserve continuity.")
+        st.info(
+            "Build the Visual Bible first so the scene prompts can keep continuity."
+        )
     else:
         st.header("Scene Production")
-        st.caption("Every scene uses Start → Action → End logic.")
-
-        if st.button(
-            "Build scenes" if not project.get("scenes_json") else "Rebuild scenes",
-            type="primary",
-        ):
-            with st.spinner("Breaking the episode into production scenes..."):
-                plan_scenes(project["id"])
-            st.rerun()
+        st.write(
+            "Each scene explains exactly what the shot starts with, "
+            "what happens, and how it must end."
+        )
 
         scene_data = load_json(project, "scenes_json", {})
         scenes = scene_data.get("scenes", [])
+
+        if st.button(
+            "Build scene prompts"
+            if not scenes
+            else "Rebuild scene prompts",
+            type="primary",
+            use_container_width=True,
+        ):
+            with st.spinner("Breaking the story into production scenes..."):
+                plan_scenes(project["id"])
+            st.rerun()
+
         if scenes:
             labels = [
-                f"Scene {s.get('scene_number', i+1)} · {s.get('scene_title', 'Untitled')}"
-                for i, s in enumerate(scenes)
+                f"Scene {scene.get('scene_number', i + 1)} · "
+                f"{scene.get('scene_title') or 'Untitled'}"
+                for i, scene in enumerate(scenes)
             ]
-            label = st.selectbox("Choose scene", labels)
-            scene = scenes[labels.index(label)]
 
-            st.markdown(f"## {label}")
+            selected_label = st.selectbox(
+                "Choose a scene",
+                labels,
+            )
+
+            scene = scenes[labels.index(selected_label)]
+
+            st.markdown(f"## {selected_label}")
+
             if scene.get("narration"):
+                st.markdown("### Narration")
                 st.write(scene["narration"])
 
-            a, b, c = st.columns(3)
-            with a:
-                st.markdown("**START**")
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.markdown("### 1. Start")
                 st.write(scene.get("start_state") or "—")
-            with b:
-                st.markdown("**ACTION**")
+
+            with c2:
+                st.markdown("### 2. Action")
                 st.write(scene.get("dominant_action") or "—")
-            with c:
-                st.markdown("**END**")
+
+            with c3:
+                st.markdown("### 3. End")
                 st.write(scene.get("end_state") or "—")
 
-            if scene.get("physical_constraints"):
-                with st.expander("Physical / spatial rules"):
-                    for x in scene.get("physical_constraints", []):
-                        st.write("•", x)
-
             st.markdown("### Frame prompt")
+            st.caption("Use this to generate the still image.")
             st.code(scene.get("frame_prompt") or "", wrap_lines=True)
 
             st.markdown("### Video prompt")
+            st.caption("Use this to animate the approved frame.")
             st.code(scene.get("video_prompt") or "", wrap_lines=True)
 
-            negatives = scene.get("negative_constraints", [])
-            if negatives:
-                with st.expander("Do not allow"):
-                    for x in negatives:
-                        st.write("•", x)
+            with st.expander("Physical rules and things that must not happen"):
+                constraints = scene.get("physical_constraints", [])
+                negatives = scene.get("negative_constraints", [])
+
+                if constraints:
+                    st.markdown("**Physical / spatial rules**")
+                    for item in constraints:
+                        st.write("•", item)
+
+                if negatives:
+                    st.markdown("**Do not allow**")
+                    for item in negatives:
+                        st.write("•", item)
 
 
-# -------------------------
-# PUBLISH
-# -------------------------
-with tabs[4]:
+# =========================================================
+# YOUTUBE
+# =========================================================
+
+with nav[4]:
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("script_json"):
         st.info("Finish the script first.")
     else:
         st.header("YouTube Package")
+        st.write(
+            "Create the title, thumbnail direction, description and pinned comment."
+        )
+
+        package = load_json(project, "package_json", {})
 
         if st.button(
-            "Create YouTube package" if not project.get("package_json") else "Regenerate package",
+            "Create YouTube package"
+            if not package
+            else "Create a new YouTube package",
             type="primary",
+            use_container_width=True,
         ):
-            with st.spinner("Creating titles, thumbnail direction and description..."):
+            with st.spinner("Packaging the episode..."):
                 make_package(project["id"])
             st.rerun()
 
-        package = load_json(project, "package_json", {})
         if package:
             title = package.get("strongest_recommended_title")
+
             if isinstance(title, dict):
                 title = title.get("title")
+
             if title:
                 st.markdown("### Recommended title")
                 st.success(title)
@@ -535,22 +798,27 @@ with tabs[4]:
             if options:
                 with st.expander("Other title ideas"):
                     for option in options:
-                        st.write("•", option)
+                        if isinstance(option, dict):
+                            st.write("•", option.get("title") or str(option))
+                        else:
+                            st.write("•", option)
 
-            thumb = package.get("strongest_thumbnail_recommendation")
-            if thumb:
+            thumbnail = package.get("strongest_thumbnail_recommendation")
+            if thumbnail:
                 st.markdown("### Thumbnail direction")
-                if isinstance(thumb, dict):
-                    st.json(thumb)
+                if isinstance(thumbnail, dict):
+                    for key, value in thumbnail.items():
+                        st.markdown(f"**{key.replace('_', ' ').title()}**")
+                        st.write(value)
                 else:
-                    st.write(thumb)
+                    st.write(thumbnail)
 
             description = package.get("youtube_description")
             if description:
                 st.markdown("### Description")
                 st.code(description, wrap_lines=True)
 
-            comment = package.get("pinned_comment")
-            if comment:
+            pinned = package.get("pinned_comment")
+            if pinned:
                 st.markdown("### Pinned comment")
-                st.code(comment, wrap_lines=True)
+                st.code(pinned, wrap_lines=True)
