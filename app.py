@@ -328,7 +328,7 @@ with nav[0]:
         rows = list_catalog_people(
             search=search,
             playlist=selected_series_filter or "",
-            limit=30,
+            limit=1000,
         )
 
         if rows:
