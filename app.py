@@ -306,6 +306,17 @@ with nav[0]:
             "Then give the episode a specific title."
         )
 
+        selected_series_filter = st.session_state.get("selected_series_filter", "")
+
+        if selected_series_filter:
+            st.info(f"Showing stories from: {selected_series_filter}")
+            if st.button(
+                "Show all stories",
+                key="clear_series_filter",
+            ):
+                st.session_state.pop("selected_series_filter", None)
+                st.rerun()
+
         search = st.text_input(
             "Search the catalogue",
             placeholder="Example: Daniel, Esther, Moses, Ruth...",
@@ -313,6 +324,7 @@ with nav[0]:
 
         rows = list_catalog_people(
             search=search,
+            playlist=selected_series_filter or "",
             limit=30,
         )
 
@@ -403,15 +415,30 @@ with nav[0]:
             st.warning("No matching story was found.")
 
         with st.expander("Browse series ideas"):
+            st.caption(
+                "Choose a series to filter the story list above."
+            )
+
             for item in list_series():
                 st.markdown(f"**{item['series_name']}**")
+
                 if item.get("core_concept"):
                     st.write(item["core_concept"])
+
                 if item.get("best_starter_episodes"):
                     st.caption(
                         "Good starting episodes: "
                         + str(item["best_starter_episodes"])
                     )
+
+                if st.button(
+                    f"Explore {item['series_name']}",
+                    key=f"series_{item['id']}",
+                    use_container_width=True,
+                ):
+                    st.session_state.selected_series_filter = item["series_name"]
+                    st.rerun()
+
                 st.divider()
 
     with st.expander("Create an episode without the catalogue"):
