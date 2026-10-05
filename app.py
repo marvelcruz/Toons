@@ -12,6 +12,8 @@ from db import (
     link_project,
     import_spreadsheet,
     seed_catalog_if_empty,
+    save_reference_asset,
+    get_reference_asset,
     using_supabase,
     auth_sign_in,
     auth_restore,
@@ -745,6 +747,57 @@ with nav[2]:
                         st.markdown("### What may vary between members")
                         for value in variation:
                             st.write("•", value)
+
+                st.divider()
+                st.markdown("### Approved reference image")
+                st.caption(
+                    "Generate the image in Google Flow, then upload the version you want "
+                    "ToonScripture to treat as the official visual reference."
+                )
+
+                saved_reference = get_reference_asset(
+                    project["id"],
+                    key,
+                    selected_name,
+                )
+
+                if saved_reference and saved_reference.get("signed_url"):
+                    st.image(
+                        saved_reference["signed_url"],
+                        caption="Approved reference",
+                        width=360,
+                    )
+                    st.success("This reference is locked for continuity.")
+
+                uploaded_reference = st.file_uploader(
+                    "Upload approved reference image",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key=f"reference_upload_{project['id']}_{key}_{selected_name}",
+                )
+
+                if uploaded_reference and st.button(
+                    "Use this as the official reference",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"save_reference_{project['id']}_{key}_{selected_name}",
+                ):
+                    with st.spinner("Saving the approved reference..."):
+                        save_reference_asset(
+                            project_id=project["id"],
+                            reference_type=key,
+                            name=selected_name,
+                            file_bytes=uploaded_reference.getvalue(),
+                            filename=uploaded_reference.name,
+                            content_type=uploaded_reference.type or "application/octet-stream",
+                            master_prompt=prompt,
+                            identity_lock=item.get(lock_key) if lock_key else None,
+                            negative_lock=(
+                                item.get("negative_identity_lock")
+                                or item.get("negative_group_lock")
+                            ),
+                        )
+                    st.success("Reference saved.")
+                    st.rerun()
 
                 with st.expander("See all visual details"):
                     st.json(item)
