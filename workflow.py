@@ -7,6 +7,14 @@ from db import get_project, load_json, save_json
 
 
 def _api_key():
+    try:
+        import streamlit as st
+        session_key = str(st.session_state.get("gemini_api_key", "") or "").strip()
+        if session_key:
+            return session_key
+    except Exception:
+        pass
+
     key = os.getenv("GEMINI_API_KEY", "").strip()
     if key:
         return key
@@ -341,3 +349,119 @@ Return:
     }
     save_json(project_id, "character_bible_json", final, "bible_ready")
     return final
+
+def narration_text(project_id):
+    project = get_project(project_id)
+    script = load_json(project, "script_json", {}) if project else {}
+
+    parts = []
+
+    if script.get("hook"):
+        parts.append(str(script["hook"]).strip())
+
+    for section in script.get("sections", []):
+        narration = section.get("narration")
+        if narration:
+            parts.append(str(narration).strip())
+
+        dialogue = section.get("dialogue")
+        if isinstance(dialogue, list):
+            for line in dialogue:
+                if isinstance(line, str) and line.strip():
+                    parts.append(line.strip())
+                elif isinstance(line, dict):
+                    text = (
+                        line.get("line")
+                        or line.get("dialogue")
+                        or line.get("text")
+                    )
+                    if text:
+                        parts.append(str(text).strip())
+
+    if script.get("closing"):
+        parts.append(str(script["closing"]).strip())
+
+    return "\n\n".join(part for part in parts if part)
+
+
+def list_tts_voices():
+    key = _api_key()
+    if not key:
+        return [
+            {"id": "Algenib", "display_name": "Algenib"},
+            {"id": "Algieba", "display_name": "Algieba"},
+        ]
+
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=key)
+        items = client.voices.list(page_size=200)
+
+        result = []
+        for voice in items:
+            data = (
+                voice.model_dump()
+                if hasattr(voice, "model_dump")
+                else dict(voice)
+            )
+            result.append(data)
+
+        return result or [
+            {"id": "Algenib", "display_name": "Algenib"},
+            {"id": "Algieba", "display_name": "Algieba"},
+        ]
+    except Exception:
+        return [
+            {"id": "Algenib", "display_name": "Algenib"},
+            {"id": "Algieba", "display_name": "Algieba"},
+        ]
+
+
+def generate_tts_bytes(
+    text,
+    voice_id="Algenib",
+    style_instruction="",
+):
+    key = _api_key()
+    if not key:
+        raise RuntimeError(
+            "AI is not connected yet. Add a Gemini API key from the app."
+        )
+
+    from google import genai
+
+    client = genai.Client(api_key=key)
+    model = os.getenv(
+        "GEMINI_TTS_MODEL",
+        "gemini-3.8-flash-tts",
+    )
+
+    prompt = text
+    if style_instruction:
+        prompt = (
+            f"Voice direction: {style_instruction}\n\n"
+            f"Narration:\n{text}"
+        )
+
+    interaction = client.interactions.create(
+        model=model,
+        input=prompt,
+        response_format={"type": "audio"},
+        voice=voice_id,
+    )
+
+    if getattr(interaction, "output_audio", None):
+        return bytes(interaction.output_audio)
+
+    if getattr(interaction, "audio", None):
+        return bytes(interaction.audio)
+
+    output = getattr(interaction, "output", None)
+    if isinstance(output, (bytes, bytearray)):
+        return bytes(output)
+
+    raise RuntimeError(
+        "The TTS request finished, but no audio file was returned."
+    )
+
