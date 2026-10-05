@@ -11,6 +11,7 @@ from db import (
     list_series,
     link_project,
     import_spreadsheet,
+    seed_catalog_if_empty,
     using_supabase,
     auth_sign_in,
     auth_restore,
@@ -84,6 +85,15 @@ if using_supabase():
                 st.error("We couldn't sign you in. Check your email and password and try again.")
 
         st.stop()
+
+    # First successful cloud sign-in automatically restores the planning catalogue.
+    try:
+        seed_catalog_if_empty()
+    except Exception as exc:
+        st.warning(
+            "Your workspace opened, but the story catalogue could not be prepared automatically. "
+            "You can still upload the planning spreadsheet from Home."
+        )
 
 
 # =========================================================
