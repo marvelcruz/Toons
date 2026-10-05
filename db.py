@@ -406,6 +406,58 @@ def load_json(project, field, default=None):
 
 
 # -------------------------------------------------------------------
+# EPISODE PERFORMANCE
+# -------------------------------------------------------------------
+
+def save_episode_metrics(
+    project_id,
+    views=None,
+    impressions=None,
+    ctr=None,
+    average_view_duration_seconds=None,
+    average_percentage_viewed=None,
+    subscribers_gained=None,
+    notes=None,
+):
+    if not using_supabase():
+        return None
+
+    payload = {
+        "project_id": project_id,
+        "views": views,
+        "impressions": impressions,
+        "ctr": ctr,
+        "average_view_duration_seconds": average_view_duration_seconds,
+        "average_percentage_viewed": average_percentage_viewed,
+        "subscribers_gained": subscribers_gained,
+        "notes": notes,
+    }
+
+    result = (
+        _client()
+        .table("episode_metrics")
+        .insert(payload)
+        .execute()
+    )
+    return result.data[0] if result.data else payload
+
+
+def list_episode_metrics(project_id):
+    if not using_supabase():
+        return []
+
+    result = (
+        _client()
+        .table("episode_metrics")
+        .select("*")
+        .eq("project_id", project_id)
+        .order("recorded_at", desc=True)
+        .execute()
+    )
+    return result.data or []
+
+
+# -------------------------------------------------------------------
 # GENERIC PROJECT ASSETS
 # -------------------------------------------------------------------
 
