@@ -102,10 +102,34 @@ def auth_sign_out(access_token=None, refresh_token=None):
 
 def _client():
     """
-    Returns an authenticated Supabase client when Streamlit has placed
-    the current user tokens into environment variables for this rerun.
+    Return a Supabase client carrying the current Streamlit user's session.
+    The tokens stay in that browser session instead of global process state.
     """
-    return _cloud_client()
+    client = _cloud_client()
+
+    try:
+        import streamlit as st
+
+        access_token = st.session_state.get("auth_access_token")
+        refresh_token = st.session_state.get("auth_refresh_token")
+
+        if access_token and refresh_token:
+            restored = client.auth.set_session(
+                access_token,
+                refresh_token,
+            )
+
+            if restored.session:
+                st.session_state.auth_access_token = (
+                    restored.session.access_token
+                )
+                st.session_state.auth_refresh_token = (
+                    restored.session.refresh_token
+                )
+    except Exception:
+        pass
+
+    return client
 
 
 # -------------------------------------------------------------------
