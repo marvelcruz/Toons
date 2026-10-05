@@ -162,13 +162,16 @@ def current_project():
     preferred = st.session_state.get("project_id")
     index = ids.index(preferred) if preferred in ids else 0
 
-    chosen = st.selectbox(
-        "Episode",
-        ids,
-        index=index,
-        format_func=lambda pid: labels[pid],
-        label_visibility="collapsed",
-    )
+    if len(projects) == 1:
+        chosen = ids[0]
+    else:
+        chosen = st.selectbox(
+            "Switch episode",
+            ids,
+            index=index,
+            format_func=lambda pid: labels[pid],
+            help="Choose another episode to continue working on.",
+        )
 
     st.session_state.project_id = chosen
     return get_project(chosen)
@@ -185,43 +188,53 @@ with st.sidebar:
 
     project = current_project()
 
+    st.markdown("### Current episode")
+
     if project:
         done, total = project_progress(project)
         st.markdown(f"**{project['story_name']}**")
         st.caption(
-            f"{project.get('bible_reference') or 'No reference'} · "
+            f"{project.get('bible_reference') or 'Bible reference not set'} · "
             f"{project.get('target_minutes', 0)} min"
         )
         st.progress(done / total)
-        st.caption(f"{done}/{total} stages complete")
+        st.caption(f"{done} of {total} preparation stages complete")
+        st.caption(f"Next: {next_step(project)}")
     else:
-        st.caption("No episode selected.")
+        st.caption("No episode yet.")
+        st.caption("Create your first episode from Home.")
 
     st.divider()
-    st.caption("You can move between sections at any time.")
 
-    st.divider()
-    st.markdown("### AI connection")
-    if _api_key():
-        st.success("AI tools are ready", icon="✅")
-    else:
+    with st.expander("⚙️ Settings"):
         st.caption(
-            "Add your Gemini API key here to create treatments, scripts, visuals, audio and reviews. "
-            "It stays in this browser session and is not saved to GitHub or the database."
+            "Most people will not need to change anything here."
         )
-        gemini_key = st.text_input(
-            "Gemini API key",
-            type="password",
-            key="gemini_key_input",
-            label_visibility="collapsed",
-            placeholder="Paste Gemini API key",
-        )
-        if st.button("Connect AI", use_container_width=True):
-            if gemini_key.strip():
-                st.session_state.gemini_api_key = gemini_key.strip()
-                st.rerun()
-            else:
-                st.warning("Paste your Gemini API key first.")
+
+        if _api_key():
+            st.success("AI tools are connected", icon="✅")
+        else:
+            st.markdown("**AI connection**")
+            st.caption(
+                "Only add this if ToonScripture asks you to connect the AI tools."
+            )
+            gemini_key = st.text_input(
+                "Gemini API key",
+                type="password",
+                key="gemini_key_input",
+                label_visibility="collapsed",
+                placeholder="Paste Gemini API key",
+            )
+            if st.button(
+                "Connect AI",
+                use_container_width=True,
+                key="connect_ai_settings",
+            ):
+                if gemini_key.strip():
+                    st.session_state.gemini_api_key = gemini_key.strip()
+                    st.rerun()
+                else:
+                    st.warning("Paste the API key first.")
 
 
 
