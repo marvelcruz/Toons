@@ -97,3 +97,39 @@ alter table public.references_library enable row level security;
 
 -- ToonScripture is currently a private single-user production tool.
 -- Server-side app access should use the Supabase service role key.
+
+
+create table if not exists public.project_assets (
+  id uuid primary key default gen_random_uuid(),
+  project_id text not null references public.projects(id) on delete cascade,
+  asset_type text not null,
+  name text not null,
+  storage_path text not null,
+  metadata_json jsonb default '{}'::jsonb,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.episode_metrics (
+  id uuid primary key default gen_random_uuid(),
+  project_id text not null references public.projects(id) on delete cascade,
+  views bigint,
+  impressions bigint,
+  ctr double precision,
+  average_view_duration_seconds integer,
+  average_percentage_viewed double precision,
+  subscribers_gained integer,
+  notes text,
+  recorded_at timestamptz default now()
+);
+
+create index if not exists idx_project_assets_project
+  on public.project_assets(project_id);
+
+create index if not exists idx_project_assets_type
+  on public.project_assets(project_id, asset_type);
+
+create index if not exists idx_episode_metrics_project
+  on public.episode_metrics(project_id, recorded_at desc);
+
+-- Runtime access is protected by authenticated-admin RLS policies
+-- applied to the connected Supabase project.
