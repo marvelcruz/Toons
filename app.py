@@ -320,24 +320,23 @@ nav = st.tabs(
 with nav[0]:
     st.header("What would you like to do?")
 
+    st.markdown("### How it works")
+    h1, h2, h3, h4, h5 = st.columns(5)
+    h1.markdown("**1. Pick a story**\n\nChoose what you want to make.")
+    h2.markdown("**2. Write it**\n\nShape the story and narration.")
+    h3.markdown("**3. Lock the look**\n\nApprove characters and locations.")
+    h4.markdown("**4. Make scenes**\n\nGenerate and check each shot.")
+    h5.markdown("**5. Publish**\n\nCreate audio and YouTube packaging.")
+
+    st.divider()
+
     if project:
         st.markdown("## Continue your current episode")
         render_project_card(project)
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.button(
-                "Continue building this episode",
-                type="primary",
-                use_container_width=True,
-                disabled=False,
-            )
-        with c2:
-            st.caption(
-                "Use the tabs above to open the exact part you want. "
-                "Nothing is locked behind a production line."
-            )
-
+        st.caption(
+            "Open any tab above whenever you want. "
+            "The app shows the recommended next step, but it never locks you into it."
+        )
         st.divider()
 
     summary = catalog_summary()
