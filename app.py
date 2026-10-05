@@ -7,6 +7,8 @@ from db import (
     create_project,
     load_json,
     catalog_summary,
+    catalog_progress_summary,
+    set_catalog_production_status,
     list_catalog_people,
     list_series,
     link_project,
@@ -234,6 +236,7 @@ st.caption(
 nav = st.tabs(
     [
         "🏠 Home",
+        "📋 Story Checklist",
         "✍️ Story & Script",
         "🎨 Visual Bible",
         "🎞️ Scene Production",
@@ -408,6 +411,10 @@ with nav[0]:
                     person_id=selected_id,
                     episode_title=episode_title,
                 )
+                set_catalog_production_status(
+                    selected_id,
+                    "in_progress",
+                )
                 st.session_state.project_id = pid
                 st.success("Episode created.")
                 st.rerun()
@@ -485,10 +492,115 @@ project = (
 
 
 # =========================================================
-# STORY & SCRIPT
+# STORY CHECKLIST
 # =========================================================
 
 with nav[1]:
+    st.header("Story Checklist")
+    st.write(
+        "This is your master production list. Every story in your ToonScripture catalogue "
+        "lives here, so you can see what is finished, what is in progress, and what is still waiting."
+    )
+
+    progress = catalog_progress_summary()
+
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("All stories", progress["total"])
+    p2.metric("Finished", progress["completed"])
+    p3.metric("In progress", progress["in_progress"])
+    p4.metric("Not started", progress["not_started"])
+
+    if progress["total"]:
+        st.progress(
+            progress["completed"] / progress["total"],
+            text=f"{progress['completed']} of {progress['total']} completed",
+        )
+
+    st.divider()
+
+    f1, f2, f3 = st.columns([2, 1, 1])
+
+    with f1:
+        checklist_search = st.text_input(
+            "Search stories",
+            placeholder="Daniel, Esther, Moses...",
+            key="checklist_search",
+        )
+
+    with f2:
+        checklist_status = st.selectbox(
+            "Status",
+            ["All", "Finished", "In progress", "Not started"],
+            key="checklist_status",
+        )
+
+    with f3:
+        checklist_priority = st.selectbox(
+            "Priority",
+            ["All", "High", "Medium", "Low"],
+            key="checklist_priority",
+        )
+
+    checklist_rows = list_catalog_people(
+        search=checklist_search,
+        priority="" if checklist_priority == "All" else checklist_priority,
+        limit=1000,
+    )
+
+    status_map = {
+        "Finished": "completed",
+        "In progress": "in_progress",
+        "Not started": "not_started",
+    }
+
+    if checklist_status != "All":
+        wanted = status_map[checklist_status]
+        checklist_rows = [
+            row for row in checklist_rows
+            if (row.get("production_status") or "not_started") == wanted
+        ]
+
+    st.caption(f"{len(checklist_rows)} stories shown")
+
+    for row in checklist_rows:
+        current_status = row.get("production_status") or "not_started"
+        is_done = current_status == "completed"
+
+        left, right = st.columns([6, 2])
+
+        with left:
+            changed_done = st.checkbox(
+                f"{row['name']} · {row.get('bible_references') or 'Reference not set'}",
+                value=is_done,
+                key=f"done_{row['id']}",
+            )
+
+            if row.get("story_role"):
+                st.caption(row["story_role"])
+
+        with right:
+            if changed_done != is_done:
+                set_catalog_production_status(
+                    row["id"],
+                    "completed" if changed_done else "not_started",
+                )
+                st.rerun()
+
+            if current_status == "completed":
+                st.success("Finished")
+            elif current_status == "in_progress":
+                st.warning("In progress")
+            else:
+                st.caption("Not started")
+
+        st.divider()
+
+
+# =========================================================
+# STORY & SCRIPT
+# =========================================================
+
+with nav[2]:
     if not project:
         st.info("Create or choose an episode from Home first.")
     else:
@@ -621,7 +733,7 @@ with nav[1]:
 # VISUAL BIBLE
 # =========================================================
 
-with nav[2]:
+with nav[3]:
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("script_json"):
@@ -800,7 +912,7 @@ with nav[2]:
 # SCENE PRODUCTION
 # =========================================================
 
-with nav[3]:
+with nav[4]:
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("character_bible_json"):
@@ -993,7 +1105,7 @@ with nav[3]:
 # AUDIO
 # =========================================================
 
-with nav[4]:
+with nav[5]:
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("script_json"):
@@ -1124,7 +1236,7 @@ with nav[4]:
 # YOUTUBE
 # =========================================================
 
-with nav[5]:
+with nav[6]:
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("script_json"):
@@ -1283,7 +1395,7 @@ with nav[5]:
 # EXPORT
 # =========================================================
 
-with nav[6]:
+with nav[7]:
     if not project:
         st.info("Choose an episode first.")
     else:
