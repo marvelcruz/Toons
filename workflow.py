@@ -56,10 +56,7 @@ def call_json(system_prompt, user_prompt, temperature=0.3):
             "Gemini is not connected yet. Add GEMINI_API_KEY in the app's deployment secrets."
         )
 
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(api_key=key)
+    import requests
 
     preferred = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     preferred = str(preferred or "").strip().strip('"').strip("'")
@@ -68,11 +65,8 @@ def call_json(system_prompt, user_prompt, temperature=0.3):
     if preferred.startswith("models/"):
         preferred = preferred.split("/", 1)[1].strip()
 
-    # Keep a short list of current, valid Gemini model IDs.
-    # If a deployment variable is mistyped, ToonScripture automatically tries
-    # the next valid model instead of crashing the whole episode workflow.
     models = []
-    for m in [
+    for model in [
         preferred,
         "gemini-3.8-flash",
         "gemini-3.7-flash",
@@ -80,54 +74,110 @@ def call_json(system_prompt, user_prompt, temperature=0.3):
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
     ]:
-        m = str(m or "").strip()
-        if m and m not in models:
-            models.append(m)
+        model = str(model or "").strip()
+        if model and model not in models:
+            models.append(model)
+
+    payload = {
+        "systemInstruction": {
+            "parts": [{"text": system_prompt}]
+        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": user_prompt}],
+            }
+        ],
+        "generationConfig": {
+            "temperature": temperature,
+            "responseMimeType": "application/json",
+        },
+    }
 
     last_error = None
+
     for model in models:
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model}:generateContent"
+        )
+
         for attempt in range(3):
             try:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        temperature=temperature,
-                        response_mime_type="application/json",
-                    ),
+                response = requests.post(
+                    url,
+                    headers={
+                        "x-goog-api-key": key,
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=120,
                 )
-                return _extract_json(response.text)
-            except Exception as exc:
-                last_error = exc
-                msg = str(exc)
 
-                if "503" in msg and attempt < 2:
+                if response.ok:
+                    data = response.json()
+                    candidates = data.get("candidates") or []
+                    if not candidates:
+                        raise RuntimeError(
+                            "Google returned no treatment text. Please try again."
+                        )
+
+                    parts = (
+                        candidates[0]
+                        .get("content", {})
+                        .get("parts", [])
+                    )
+                    text = "".join(
+                        str(part.get("text") or "")
+                        for part in parts
+                    ).strip()
+
+                    if not text:
+                        raise RuntimeError(
+                            "Google returned an empty response. Please try again."
+                        )
+
+                    return _extract_json(text)
+
+                last_error = RuntimeError(
+                    f"Gemini returned HTTP {response.status_code}: {response.text[:800]}"
+                )
+
+                if response.status_code == 503 and attempt < 2:
                     time.sleep(2 * (attempt + 1))
                     continue
 
-                # Model-name / availability problems should fall through to the
-                # next known-good model, not surface as a technical crash.
-                if (
-                    "unexpected model name format" in msg.lower()
-                    or "model not found" in msg.lower()
-                    or "404" in msg
-                    or "503" in msg
-                ):
+                if response.status_code in (400, 404, 503):
                     break
 
-                # Quota is account/key-specific, so trying another model may
-                # still succeed without changing the user's project.
-                if "429" in msg:
-                    break
+                if response.status_code == 429:
+                    raise RuntimeError(
+                        "The Gemini API quota for this key is temporarily exhausted. "
+                        "Try again later or use a paid Gemini API project."
+                    )
 
+                raise last_error
+
+            except requests.Timeout as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
                 raise RuntimeError(
-                    "The AI request could not be completed. "
-                    "ToonScripture tried the configured Gemini model but Google rejected the request."
+                    "Google took too long to answer. Please click Generate again."
+                ) from exc
+
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                raise RuntimeError(
+                    "ToonScripture could not reach the Gemini API. Please try again."
                 ) from exc
 
     raise RuntimeError(
-        "Gemini generation failed after trying the available models. "
+        "Gemini could not generate this step with the available model. "
         f"Last error: {last_error}"
     )
 
