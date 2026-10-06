@@ -466,6 +466,53 @@ def critique_script(project_id):
     return out
 
 
+def _fit_flow_durations(raw_durations, target_seconds):
+    allowed = (4, 5, 8, 10)
+    if not raw_durations:
+        return []
+
+    states = {0: (0, [])}
+
+    for raw in raw_durations:
+        try:
+            raw_value = int(raw)
+        except Exception:
+            raw_value = 8
+
+        next_states = {}
+        for total, (cost, path) in states.items():
+            for duration in allowed:
+                new_total = total + duration
+                if new_total > target_seconds + 10:
+                    continue
+
+                new_cost = cost + abs(duration - raw_value)
+                current = next_states.get(new_total)
+
+                if current is None or new_cost < current[0]:
+                    next_states[new_total] = (
+                        new_cost,
+                        path + [duration],
+                    )
+
+        states = next_states
+
+    if not states:
+        return [
+            min(allowed, key=lambda value: abs(value - int(raw or 8)))
+            for raw in raw_durations
+        ]
+
+    best_total = min(
+        states,
+        key=lambda total: (
+            abs(total - target_seconds),
+            states[total][0],
+        ),
+    )
+    return states[best_total][1]
+
+
 def plan_scenes(project_id):
     p = get_project(project_id)
     script = load_json(p, "script_json", {})
@@ -547,14 +594,25 @@ Choose shorter clips for fast action and longer clips for reflective or establis
             all_scenes.append(scene)
             next_number += 1
 
+    fitted_durations = _fit_flow_durations(
+        [scene.get("duration_seconds") or 8 for scene in all_scenes],
+        target_seconds,
+    )
+
+    for scene, duration in zip(all_scenes, fitted_durations):
+        scene["duration_seconds"] = duration
+
+    planned_seconds = sum(
+        int(scene.get("duration_seconds") or 0)
+        for scene in all_scenes
+    )
+
     out = {
         "target_runtime_seconds": target_seconds,
         "timing_source": timing_source,
         "allowed_clip_lengths": [4, 5, 8, 10],
-        "planned_runtime_seconds": sum(
-            int(scene.get("duration_seconds") or 0)
-            for scene in all_scenes
-        ),
+        "planned_runtime_seconds": planned_seconds,
+        "runtime_difference_seconds": planned_seconds - target_seconds,
         "scenes": all_scenes,
     }
     save_json(project_id, "scenes_json", out, "scenes_ready")
