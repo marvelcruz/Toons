@@ -21,6 +21,7 @@ from db import (
     seed_catalog_if_empty,
     save_reference_asset,
     get_reference_asset,
+    list_reference_assets,
     save_project_asset,
     list_project_assets,
     signed_asset_url,
@@ -59,9 +60,10 @@ init_db()
 # CLOUD WORKSPACE
 # =========================================================
 
-if using_supabase():
+if using_supabase() and not st.session_state.get("_catalog_seed_checked"):
     try:
         seed_catalog_if_empty()
+        st.session_state["_catalog_seed_checked"] = True
     except Exception:
         st.warning(
             "Your workspace opened, but the story catalogue could not be prepared automatically. "
@@ -204,7 +206,7 @@ def current_project():
         )
 
     st.session_state.project_id = chosen
-    return get_project(chosen)
+    return next(p for p in projects if p["id"] == chosen)
 
 
 # =========================================================
@@ -269,9 +271,16 @@ with st.sidebar:
                     "Render is not detecting OPENROUTER_API_KEY in the running service."
                 )
 
+            if st.button(
+                "Refresh API usage",
+                use_container_width=True,
+                key="refresh_api_usage",
+            ):
+                st.session_state["_ai_usage_cache"] = ai_usage_today()
+
             usage_rows = {
                 row["project_name"]: row
-                for row in ai_usage_today()
+                for row in st.session_state.get("_ai_usage_cache", [])
             }
 
             project_sections = [
@@ -291,6 +300,8 @@ with st.sidebar:
                 "Bars show ToonScripture requests made today against a 20-request "
                 "daily guide. This is a usage tracker, not Google's exact remaining quota."
             )
+            if not st.session_state.get("_ai_usage_cache"):
+                st.caption("Click Refresh API usage when you need these numbers.")
 
             usage_guide = 20
 
@@ -1081,13 +1092,12 @@ with page_root.container():
                     len(bible.get(key, []) or [])
                     for _, key, _, _ in categories
                 )
-                approved_items = 0
-
-                for _, key, _, _ in categories:
-                    for item in bible.get(key, []) or []:
-                        name = item.get("name") or "Unnamed"
-                        if get_reference_asset(project["id"], key, name):
-                            approved_items += 1
+                reference_rows = list_reference_assets(project["id"])
+                reference_lookup = {
+                    (row.get("reference_type"), row.get("name")): row
+                    for row in reference_rows
+                }
+                approved_items = len(reference_rows)
 
                 st.markdown("## Complete Visual Bible")
                 st.write(
@@ -1198,15 +1208,21 @@ with page_root.container():
                                     st.write("•", value)
 
                         st.markdown("### Approved reference image")
-                        saved_reference = get_reference_asset(
-                            project["id"],
-                            key,
-                            selected_name,
+                        saved_reference = reference_lookup.get(
+                            (key, selected_name)
                         )
+                        signed_reference_url = None
+                        if saved_reference and saved_reference.get("image_path"):
+                            try:
+                                signed_reference_url = signed_asset_url(
+                                    saved_reference["image_path"]
+                                )
+                            except Exception:
+                                signed_reference_url = None
 
-                        if saved_reference and saved_reference.get("signed_url"):
+                        if signed_reference_url:
                             st.image(
-                                saved_reference["signed_url"],
+                                signed_reference_url,
                                 caption="Approved reference",
                                 width=360,
                             )
@@ -1347,6 +1363,17 @@ with page_root.container():
                         "Click Rebuild scene prompts before production."
                     )
 
+                scene_bible = load_json(
+                    project,
+                    "character_bible_json",
+                    {},
+                )
+                scene_reference_rows = list_reference_assets(project["id"])
+                scene_reference_lookup = {
+                    (row.get("reference_type"), row.get("name")): row
+                    for row in scene_reference_rows
+                }
+
                 for i, scene in enumerate(scenes):
                     scene_number = scene.get("scene_number", i + 1)
                     scene_title = scene.get("scene_title") or "Untitled"
@@ -1374,6 +1401,9 @@ with page_root.container():
                         scene_package = compose_scene_package(
                             project["id"],
                             scene,
+                            project=project,
+                            bible=scene_bible,
+                            saved_lookup=scene_reference_lookup,
                         )
 
                         st.markdown("**Frame prompt**")
@@ -1830,8 +1860,24 @@ with page_root.container():
 
             if scene_list:
                 lines += ["SCENE PROMPTS", "=" * 60]
+                export_bible = load_json(
+                    project,
+                    "character_bible_json",
+                    {},
+                )
+                export_reference_rows = list_reference_assets(project["id"])
+                export_reference_lookup = {
+                    (row.get("reference_type"), row.get("name")): row
+                    for row in export_reference_rows
+                }
                 for scene in scene_list:
-                    package = compose_scene_package(project["id"], scene)
+                    package = compose_scene_package(
+                        project["id"],
+                        scene,
+                        project=project,
+                        bible=export_bible,
+                        saved_lookup=export_reference_lookup,
+                    )
                     lines += [
                         f"SCENE {scene.get('scene_number', '')}: {scene.get('scene_title', '')}",
                         "",
