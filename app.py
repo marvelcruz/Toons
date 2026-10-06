@@ -22,6 +22,7 @@ from db import (
     signed_asset_url,
     save_episode_metrics,
     list_episode_metrics,
+    ai_usage_today,
     using_supabase,
 )
 from workflow import (
@@ -242,6 +243,56 @@ with st.sidebar:
             st.warning(
                 "AI is not configured on the server yet. "
                 "Once it is configured, you will not need to paste an API key into ToonScripture."
+            )
+
+
+        st.divider()
+        st.markdown("### AI usage today")
+        st.caption(
+            "This shows ToonScripture requests made today. Google does not expose an exact "
+            "remaining-quota percentage here, so these are app-side request counts and health signals."
+        )
+
+        usage_rows = {row["project_name"]: row for row in ai_usage_today()}
+        project_sections = [
+            ("A", "Shape story"),
+            ("B", "Write script"),
+            ("C", "Retention"),
+            ("D", "Visual Bible"),
+            ("E", "Scenes"),
+            ("F", "YouTube"),
+            ("G", "Audio"),
+            ("H", "Frame review"),
+            ("I", "Spare"),
+        ]
+
+        for letter, label in project_sections:
+            key_name = f"GEMINI_API_KEY_{letter}"
+            row = usage_rows.get(key_name, {})
+            count = row.get("requests", 0)
+            last_status = row.get("last_status")
+            http_status = row.get("last_http_status")
+
+            if last_status == "success":
+                icon = "🟢"
+                status_text = "working"
+            elif http_status == 429:
+                icon = "🟡"
+                status_text = "quota limit"
+            elif http_status == 503:
+                icon = "🟠"
+                status_text = "Google busy"
+            elif last_status:
+                icon = "🔴"
+                status_text = "error"
+            else:
+                icon = "⚪"
+                status_text = "unused"
+
+            st.caption(
+                f"{icon} Project {letter} · {label} — {count} request"
+                + ("s" if count != 1 else "")
+                + f" · {status_text}"
             )
 
 
