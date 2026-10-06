@@ -1,4 +1,6 @@
 import json
+import io
+import wave
 import streamlit as st
 
 from db import (
@@ -67,6 +69,18 @@ if using_supabase():
 # =========================================================
 # HELPERS
 # =========================================================
+
+def audio_duration_seconds(audio_bytes):
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wav:
+            frames = wav.getnframes()
+            rate = wav.getframerate()
+            if rate:
+                return round(frames / rate, 2)
+    except Exception:
+        pass
+    return None
+
 
 def project_progress(project):
     checks = [
@@ -322,8 +336,8 @@ MAIN_SECTIONS = [
     "📋 Story Checklist",
     "✍️ Story & Script",
     "🎨 Visual Bible",
-    "🎞️ Scene Production",
     "🎙️ Audio",
+    "🎞️ Scene Production",
     "📺 YouTube",
     "📦 Export",
 ]
@@ -1159,12 +1173,12 @@ if main_section == "🎨 Visual Bible":
         if bible:
             st.divider()
             st.button(
-                "Next → Scene Production",
+                "Next → Narration Audio",
                 type="primary",
                 use_container_width=True,
-                key="next_to_scene_production",
+                key="next_to_audio_from_bible",
                 on_click=go_to_main_section,
-                args=("🎞️ Scene Production",),
+                args=("🎙️ Audio",),
             )
 
 
@@ -1320,12 +1334,12 @@ if main_section == "🎞️ Scene Production":
         if scenes:
             st.divider()
             st.button(
-                "Next → Audio",
+                "Next → YouTube",
                 type="primary",
                 use_container_width=True,
-                key="next_to_audio",
+                key="next_to_youtube_from_scenes",
                 on_click=go_to_main_section,
-                args=("🎙️ Audio",),
+                args=("📺 YouTube",),
             )
 
 
@@ -1425,6 +1439,12 @@ if main_section == "🎙️ Audio":
                             metadata={
                                 "voice": voice_lookup[selected_voice],
                                 "voice_direction": voice_direction,
+                                "duration_seconds": audio_duration_seconds(
+                                    audio_bytes
+                                ),
+                                "word_count": len(
+                                    full_narration.split()
+                                ),
                             },
                         )
 
@@ -1462,12 +1482,12 @@ if main_section == "🎙️ Audio":
             if saved_audio_files or latest_audio:
                 st.divider()
                 st.button(
-                    "Next → YouTube",
+                    "Next → Scene Production",
                     type="primary",
                     use_container_width=True,
-                    key="next_to_youtube",
+                    key="next_to_scene_production_from_audio",
                     on_click=go_to_main_section,
-                    args=("📺 YouTube",),
+                    args=("🎞️ Scene Production",),
                 )
 
 
