@@ -102,16 +102,31 @@ def auth_sign_out(access_token=None, refresh_token=None):
 
 def _client():
     """
-    Return a Supabase client carrying the current Streamlit user's session.
-    The tokens stay in that browser session instead of global process state.
-    """
-    client = _cloud_client()
+    Return one Supabase client per Streamlit browser session.
 
+    Creating a new client and restoring auth on every database call made the
+    whole UI sluggish because Streamlit reruns the script for every click.
+    Reuse the client until the browser auth tokens actually change.
+    """
     try:
         import streamlit as st
 
         access_token = st.session_state.get("auth_access_token")
         refresh_token = st.session_state.get("auth_refresh_token")
+        token_signature = (
+            str(access_token or ""),
+            str(refresh_token or ""),
+        )
+
+        cached_client = st.session_state.get("_toonscripture_supabase_client")
+        cached_signature = st.session_state.get(
+            "_toonscripture_supabase_token_signature"
+        )
+
+        if cached_client is not None and cached_signature == token_signature:
+            return cached_client
+
+        client = _cloud_client()
 
         if access_token and refresh_token:
             restored = client.auth.set_session(
@@ -126,10 +141,18 @@ def _client():
                 st.session_state.auth_refresh_token = (
                     restored.session.refresh_token
                 )
-    except Exception:
-        pass
+                token_signature = (
+                    str(restored.session.access_token or ""),
+                    str(restored.session.refresh_token or ""),
+                )
 
-    return client
+        st.session_state["_toonscripture_supabase_client"] = client
+        st.session_state["_toonscripture_supabase_token_signature"] = (
+            token_signature
+        )
+        return client
+    except Exception:
+        return _cloud_client()
 
 
 # -------------------------------------------------------------------
