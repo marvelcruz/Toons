@@ -1201,164 +1201,121 @@ if main_section == "🎞️ Scene Production":
             st.rerun()
 
         if scenes:
-            labels = [
-                f"Scene {scene.get('scene_number', i + 1)} · "
-                f"{scene.get('scene_title') or 'Untitled'}"
-                for i, scene in enumerate(scenes)
-            ]
-
-            selected_label = st.selectbox(
-                "Choose a scene",
-                labels,
+            total_seconds = sum(
+                int(scene.get("duration_seconds") or 0)
+                for scene in scenes
+            )
+            target_seconds = int(
+                round(float(project.get("target_minutes") or 0) * 60)
             )
 
-            scene = scenes[labels.index(selected_label)]
-
-            st.markdown(f"## {selected_label}")
-
-            if scene.get("narration"):
-                st.markdown("### Narration")
-                st.write(scene["narration"])
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                st.markdown("### 1. Start")
-                st.write(scene.get("start_state") or "—")
-
-            with c2:
-                st.markdown("### 2. Action")
-                st.write(scene.get("dominant_action") or "—")
-
-            with c3:
-                st.markdown("### 3. End")
-                st.write(scene.get("end_state") or "—")
-
-            scene_package = compose_scene_package(project["id"], scene)
-            scene_refs = reference_summary(scene_package)
-
-            if scene_refs:
-                st.markdown("### Continuity references")
-                approved_count = sum(1 for ref in scene_refs if ref["approved"])
-                st.caption(
-                    f"{approved_count} of {len(scene_refs)} relevant visual references are approved."
-                )
-                for ref in scene_refs:
-                    icon = "✅" if ref["approved"] else "○"
-                    st.write(
-                        f"{icon} {ref['name']} · "
-                        f"{'reference locked' if ref['approved'] else 'reference not uploaded yet'}"
-                    )
-
-            st.markdown("### Frame prompt")
-            st.caption(
-                "Use this complete prompt to generate the still image. "
-                "It automatically includes the continuity locks for this scene."
-            )
-            st.code(scene_package.get("frame_prompt") or "", wrap_lines=True)
-
-            st.markdown("### Video prompt")
-            st.caption(
-                "Use this after the still frame is approved. "
-                "It preserves the start → action → end movement logic."
-            )
-            st.code(scene_package.get("video_prompt") or "", wrap_lines=True)
-
-            with st.expander("Physical rules and things that must not happen"):
-                constraints = scene.get("physical_constraints", [])
-                negatives = scene.get("negative_constraints", [])
-
-                if constraints:
-                    st.markdown("**Physical / spatial rules**")
-                    for item in constraints:
-                        st.write("•", item)
-
-                if negatives:
-                    st.markdown("**Do not allow**")
-                    for item in negatives:
-                        st.write("•", item)
-
-            st.divider()
-            st.markdown("### Check the generated frame")
+            st.markdown("### Full episode scene plan")
             st.write(
-                "After you generate the still image in Flow, upload it here. "
-                "ToonScripture will compare it with the scene and Visual Bible before you animate it."
+                f"**{len(scenes)} scenes** · "
+                f"**{total_seconds // 60}:{total_seconds % 60:02d} planned** "
+                f"of **{target_seconds // 60}:{target_seconds % 60:02d} target**"
+            )
+            st.caption(
+                "Flow clip lengths are locked to 4, 5, 8 or 10 seconds. "
+                "All scenes are listed below in story order."
             )
 
-            frame_upload = st.file_uploader(
-                "Upload generated frame",
-                type=["png", "jpg", "jpeg", "webp"],
-                key=f"scene_frame_{project['id']}_{selected_label}",
-            )
+            if target_seconds and abs(total_seconds - target_seconds) > 15:
+                st.warning(
+                    "The current scene timing does not closely match the episode runtime. "
+                    "Click Rebuild scene prompts before production."
+                )
 
-            if frame_upload and st.button(
-                "Check this frame",
-                type="primary",
-                use_container_width=True,
-                key=f"review_frame_{project['id']}_{selected_label}",
-            ):
-                if not _api_key():
-                    st.error("Connect AI from the sidebar first.")
-                else:
-                    with st.spinner("Checking identity, scene accuracy and physical logic..."):
-                        review = review_scene_frame(
-                            project["id"],
-                            scene,
-                            frame_upload.getvalue(),
-                            frame_upload.type or "image/png",
-                        )
+            for i, scene in enumerate(scenes):
+                scene_number = scene.get("scene_number", i + 1)
+                scene_title = scene.get("scene_title") or "Untitled"
+                duration = int(scene.get("duration_seconds") or 0)
+                label = (
+                    f"Scene {scene_number} · {scene_title} · {duration} sec"
+                )
 
-                        save_project_asset(
-                            project_id=project["id"],
-                            asset_type="scene_frame",
-                            name=selected_label,
-                            file_bytes=frame_upload.getvalue(),
-                            filename=frame_upload.name,
-                            content_type=frame_upload.type or "image/png",
-                            metadata={
-                                "scene_number": scene.get("scene_number"),
-                                "scene_title": scene.get("scene_title"),
-                                "continuity_review": review,
-                            },
-                        )
+                with st.expander(label):
+                    if scene.get("narration"):
+                        st.markdown("**Narration**")
+                        st.write(scene["narration"])
 
-                    st.session_state[
-                        f"review_result_{project['id']}_{selected_label}"
-                    ] = review
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.markdown("**Start**")
+                        st.write(scene.get("start_state") or "—")
+                    with c2:
+                        st.markdown("**Action**")
+                        st.write(scene.get("dominant_action") or "—")
+                    with c3:
+                        st.markdown("**End**")
+                        st.write(scene.get("end_state") or "—")
 
-            review = st.session_state.get(
-                f"review_result_{project['id']}_{selected_label}"
-            )
-
-            if review:
-                verdict = review.get("verdict", "")
-                score = review.get("overall_score")
-
-                if verdict == "approved":
-                    st.success(
-                        f"Approved for animation"
-                        + (f" · {score}/100" if score is not None else "")
-                    )
-                elif verdict == "minor_fix":
-                    st.warning(
-                        f"Almost there — make a small fix"
-                        + (f" · {score}/100" if score is not None else "")
-                    )
-                else:
-                    st.error(
-                        f"Regenerate this frame"
-                        + (f" · {score}/100" if score is not None else "")
+                    scene_package = compose_scene_package(
+                        project["id"],
+                        scene,
                     )
 
-                for problem in review.get("problems", []):
-                    st.write("•", problem)
-
-                if review.get("regeneration_instruction"):
-                    st.markdown("**What to change**")
+                    st.markdown("**Frame prompt**")
                     st.code(
-                        review["regeneration_instruction"],
+                        scene_package.get("frame_prompt") or "",
                         wrap_lines=True,
                     )
+
+                    st.markdown("**Video prompt**")
+                    st.code(
+                        scene_package.get("video_prompt") or "",
+                        wrap_lines=True,
+                    )
+
+                    constraints = scene.get("physical_constraints", [])
+                    negatives = scene.get("negative_constraints", [])
+                    if constraints or negatives:
+                        st.markdown("**Rules**")
+                        for item in constraints:
+                            st.write("•", item)
+                        for item in negatives:
+                            st.write("• Do not:", item)
+
+                    frame_upload = st.file_uploader(
+                        f"Upload generated frame for Scene {scene_number}",
+                        type=["png", "jpg", "jpeg", "webp"],
+                        key=f"scene_frame_{project['id']}_{scene_number}",
+                    )
+
+                    if frame_upload and st.button(
+                        f"Check Scene {scene_number} frame",
+                        type="primary",
+                        use_container_width=True,
+                        key=f"review_frame_{project['id']}_{scene_number}",
+                    ):
+                        with st.spinner(
+                            f"Checking Scene {scene_number}..."
+                        ):
+                            review = review_scene_frame(
+                                project["id"],
+                                scene,
+                                frame_upload.getvalue(),
+                                frame_upload.type or "image/png",
+                            )
+                        st.session_state[
+                            f"review_result_{project['id']}_{scene_number}"
+                        ] = review
+
+                    review = st.session_state.get(
+                        f"review_result_{project['id']}_{scene_number}"
+                    )
+                    if review:
+                        verdict = review.get("verdict", "")
+                        score = review.get("overall_score")
+                        st.write(
+                            f"Review: {verdict or 'complete'}"
+                            + (
+                                f" · {score}/100"
+                                if score is not None
+                                else ""
+                            )
+                        )
+
 
         if scenes:
             st.divider()
