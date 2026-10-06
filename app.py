@@ -32,6 +32,7 @@ from workflow import (
     plan_scenes,
     make_package,
     _api_key,
+    _api_key_count,
     narration_text,
     list_tts_voices,
     generate_tts_bytes,
@@ -220,7 +221,13 @@ with st.sidebar:
         )
 
         if _api_key():
+            count = _api_key_count()
             st.success("AI tools are connected", icon="✅")
+            if count > 1:
+                st.caption(
+                    f"1 primary Gemini project + {count - 1} backup project"
+                    + ("s" if count - 1 != 1 else "")
+                )
         else:
             st.warning(
                 "AI is not configured on the server yet. "
