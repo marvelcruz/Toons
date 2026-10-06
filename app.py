@@ -776,6 +776,8 @@ if main_section == "✍️ Story & Script":
                     "This checks the hook, pacing, repetition, emotional build and payoff."
                 )
 
+                review_error = None
+
                 if st.button(
                     "Review the script"
                     if not critique
@@ -783,9 +785,37 @@ if main_section == "✍️ Story & Script":
                     type="primary",
                     use_container_width=True,
                 ):
-                    with st.spinner("Reviewing the script..."):
-                        critique_script(project["id"])
-                    st.rerun()
+                    try:
+                        with st.spinner("Reviewing the script..."):
+                            critique_script(project["id"])
+                        st.rerun()
+                    except Exception as exc:
+                        review_error = str(exc)
+
+                if review_error:
+                    if "quota" in review_error.lower() or "429" in review_error:
+                        st.warning(
+                            "The AI review limit has been reached for the connected Gemini API project. "
+                            "Your script is safe and nothing has been lost. You can retry the retention "
+                            "review later, or continue to the Visual Bible now."
+                        )
+                    else:
+                        st.error(
+                            "The retention review could not be completed right now. "
+                            "Your script is saved, so you can retry later."
+                        )
+
+                    with st.expander("Technical details"):
+                        st.code(review_error)
+
+                    st.button(
+                        "Continue for now → Visual Bible",
+                        type="primary",
+                        use_container_width=True,
+                        key="skip_retention_to_visual_bible",
+                        on_click=go_to_main_section,
+                        args=("🎨 Visual Bible",),
+                    )
 
                 if critique:
                     score = critique.get("score_100")
