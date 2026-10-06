@@ -229,6 +229,64 @@ with st.sidebar:
                 + ("s" if count != 1 else "")
             )
 
+            usage_rows = {
+                row["project_name"]: row
+                for row in ai_usage_today()
+            }
+
+            project_sections = [
+                ("A", "Shape story"),
+                ("B", "Write script"),
+                ("C", "Retention"),
+                ("D", "Visual Bible"),
+                ("E", "Scenes"),
+                ("F", "YouTube"),
+                ("G", "Audio"),
+                ("H", "Frame review"),
+                ("I", "Spare"),
+            ]
+
+            st.markdown("### API usage today")
+            st.caption(
+                "Bars show ToonScripture requests made today against a 20-request "
+                "daily guide. This is a usage tracker, not Google's exact remaining quota."
+            )
+
+            usage_guide = 20
+
+            for letter, label in project_sections:
+                key_name = f"GEMINI_API_KEY_{letter}"
+                row = usage_rows.get(key_name, {})
+                requests_used = int(row.get("requests", 0) or 0)
+                http_status = row.get("last_http_status")
+                last_status = row.get("last_status")
+
+                if http_status == 429:
+                    state = "LIMIT REACHED"
+                elif http_status == 503:
+                    state = "GOOGLE BUSY"
+                elif last_status == "success":
+                    state = "WORKING"
+                elif last_status:
+                    state = "ERROR"
+                else:
+                    state = "UNUSED"
+
+                st.markdown(
+                    f"**Project {letter} · {label}**  \\n"
+                    f"{requests_used}/{usage_guide} tracked today · {state}"
+                )
+
+                progress_value = min(
+                    requests_used / usage_guide,
+                    1.0,
+                )
+
+                if http_status == 429:
+                    progress_value = 1.0
+
+                st.progress(progress_value)
+
             with st.expander("Which AI project does each section use?"):
                 st.write("**Shape the story** → Project A")
                 st.write("**Write the script** → Project B")
@@ -246,54 +304,6 @@ with st.sidebar:
             )
 
 
-        st.divider()
-        st.markdown("### AI usage today")
-        st.caption(
-            "This shows ToonScripture requests made today. Google does not expose an exact "
-            "remaining-quota percentage here, so these are app-side request counts and health signals."
-        )
-
-        usage_rows = {row["project_name"]: row for row in ai_usage_today()}
-        project_sections = [
-            ("A", "Shape story"),
-            ("B", "Write script"),
-            ("C", "Retention"),
-            ("D", "Visual Bible"),
-            ("E", "Scenes"),
-            ("F", "YouTube"),
-            ("G", "Audio"),
-            ("H", "Frame review"),
-            ("I", "Spare"),
-        ]
-
-        for letter, label in project_sections:
-            key_name = f"GEMINI_API_KEY_{letter}"
-            row = usage_rows.get(key_name, {})
-            count = row.get("requests", 0)
-            last_status = row.get("last_status")
-            http_status = row.get("last_http_status")
-
-            if last_status == "success":
-                icon = "🟢"
-                status_text = "working"
-            elif http_status == 429:
-                icon = "🟡"
-                status_text = "quota limit"
-            elif http_status == 503:
-                icon = "🟠"
-                status_text = "Google busy"
-            elif last_status:
-                icon = "🔴"
-                status_text = "error"
-            else:
-                icon = "⚪"
-                status_text = "unused"
-
-            st.caption(
-                f"{icon} Project {letter} · {label} — {count} request"
-                + ("s" if count != 1 else "")
-                + f" · {status_text}"
-            )
 
 
 
