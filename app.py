@@ -33,6 +33,7 @@ from workflow import (
     make_package,
     _api_key,
     _api_key_count,
+    _api_key_names,
     narration_text,
     list_tts_voices,
     generate_tts_bytes,
@@ -228,6 +229,27 @@ with st.sidebar:
                     f"1 primary Gemini project + {count - 1} backup project"
                     + ("s" if count - 1 != 1 else "")
                 )
+
+                names = _api_key_names()
+                pretty = {"GEMINI_API_KEY": "Default project"}
+                for letter in "ABCDEFGHI":
+                    pretty[f"GEMINI_API_KEY_{letter}"] = f"Project {letter}"
+
+                selected_name = st.selectbox(
+                    "Primary AI project",
+                    names,
+                    index=0,
+                    format_func=lambda name: pretty.get(name, name),
+                    help=(
+                        "Choose which configured Gemini project ToonScripture should use first. "
+                        "This choice only affects this browser session."
+                    ),
+                    key="gemini_primary_picker",
+                )
+
+                if selected_name != names[0]:
+                    st.session_state.gemini_primary_name = selected_name
+                    st.rerun()
         else:
             st.warning(
                 "AI is not configured on the server yet. "
@@ -911,6 +933,8 @@ if main_section == "🎨 Visual Bible":
                 "You have not created the Visual Bible for this episode yet."
             )
 
+        visual_bible_error = None
+
         if st.button(
             "Build the Visual Bible"
             if not bible
@@ -918,11 +942,30 @@ if main_section == "🎨 Visual Bible":
             type="primary",
             use_container_width=True,
         ):
-            with st.spinner(
-                "Building people, groups, locations and props..."
-            ):
-                build_character_bible(project["id"])
-            st.rerun()
+            try:
+                with st.spinner(
+                    "Building people, groups, locations and props..."
+                ):
+                    build_character_bible(project["id"])
+                st.rerun()
+            except Exception as exc:
+                visual_bible_error = str(exc)
+
+        if visual_bible_error:
+            if "quota" in visual_bible_error.lower() or "429" in visual_bible_error:
+                st.warning(
+                    "The selected Gemini project has reached its current API limit. "
+                    "Nothing was lost. Open Settings, choose another configured AI project, "
+                    "then click Build the Visual Bible again."
+                )
+            else:
+                st.error(
+                    "The Visual Bible could not be created right now. "
+                    "Your episode and script are still saved."
+                )
+
+            with st.expander("Technical details"):
+                st.code(visual_bible_error)
 
         if bible:
             categories = {
