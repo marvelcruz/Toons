@@ -30,9 +30,19 @@ def scene_search_text(scene):
     return normalize_text(json.dumps(scene, ensure_ascii=False))
 
 
-def _reference(project_id, kind, item, lock_key, negative_key=None):
+def _reference(
+    project_id,
+    kind,
+    item,
+    lock_key,
+    negative_key=None,
+    saved_lookup=None,
+):
     name = item.get("name", "")
-    saved = get_reference_asset(project_id, kind, name)
+    if saved_lookup is None:
+        saved = get_reference_asset(project_id, kind, name)
+    else:
+        saved = saved_lookup.get((kind, name))
 
     return {
         "name": name,
@@ -43,9 +53,17 @@ def _reference(project_id, kind, item, lock_key, negative_key=None):
     }
 
 
-def collect_scene_references(project_id, scene):
-    project = get_project(project_id)
-    bible = load_json(project, "character_bible_json", {}) if project else {}
+def collect_scene_references(
+    project_id,
+    scene,
+    project=None,
+    bible=None,
+    saved_lookup=None,
+):
+    if project is None:
+        project = get_project(project_id)
+    if bible is None:
+        bible = load_json(project, "character_bible_json", {}) if project else {}
     search = scene_search_text(scene)
 
     characters = []
@@ -58,6 +76,7 @@ def collect_scene_references(project_id, scene):
                     item,
                     "identity_lock",
                     "negative_identity_lock",
+                    saved_lookup=saved_lookup,
                 )
             )
 
@@ -70,6 +89,7 @@ def collect_scene_references(project_id, scene):
                     item,
                     "identity_lock",
                     "negative_identity_lock",
+                    saved_lookup=saved_lookup,
                 )
             )
 
@@ -83,6 +103,7 @@ def collect_scene_references(project_id, scene):
                     item,
                     "group_identity_lock",
                     "negative_group_lock",
+                    saved_lookup=saved_lookup,
                 )
             )
 
@@ -94,6 +115,7 @@ def collect_scene_references(project_id, scene):
                 "locations",
                 item,
                 "environment_lock",
+                saved_lookup=saved_lookup,
             )
             break
 
@@ -109,6 +131,7 @@ def collect_scene_references(project_id, scene):
                     "locations",
                     item,
                     "environment_lock",
+                    saved_lookup=saved_lookup,
                 )
                 break
 
@@ -121,6 +144,7 @@ def collect_scene_references(project_id, scene):
                     "props",
                     item,
                     "master_prop_prompt",
+                    saved_lookup=saved_lookup,
                 )
             )
 
@@ -143,10 +167,24 @@ def build_style_block(bible):
     return "\n".join(str(v) for v in parts if v)
 
 
-def compose_scene_package(project_id, scene):
-    project = get_project(project_id)
-    bible = load_json(project, "character_bible_json", {}) if project else {}
-    refs = collect_scene_references(project_id, scene)
+def compose_scene_package(
+    project_id,
+    scene,
+    project=None,
+    bible=None,
+    saved_lookup=None,
+):
+    if project is None:
+        project = get_project(project_id)
+    if bible is None:
+        bible = load_json(project, "character_bible_json", {}) if project else {}
+    refs = collect_scene_references(
+        project_id,
+        scene,
+        project=project,
+        bible=bible,
+        saved_lookup=saved_lookup,
+    )
 
     locks = []
     negatives = []
