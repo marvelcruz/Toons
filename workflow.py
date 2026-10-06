@@ -70,6 +70,30 @@ def _api_key_names():
     return [item["name"] for item in _api_keys()]
 
 
+SECTION_KEY_MAP = {
+    "treatment": "GEMINI_API_KEY_A",
+    "script": "GEMINI_API_KEY_B",
+    "retention": "GEMINI_API_KEY_C",
+    "visual_bible": "GEMINI_API_KEY_D",
+    "scenes": "GEMINI_API_KEY_E",
+    "youtube": "GEMINI_API_KEY_F",
+    "tts": "GEMINI_API_KEY_G",
+    "vision": "GEMINI_API_KEY_H",
+    "spare": "GEMINI_API_KEY_I",
+}
+
+
+def _api_key_for(section):
+    target = SECTION_KEY_MAP.get(section)
+    if target:
+        for item in _api_keys():
+            if item["name"] == target:
+                return item["value"], target
+
+    key = _api_key()
+    return key, (_api_key_names()[0] if _api_key_names() else "")
+
+
 def _extract_json(text):
     text = (text or "").strip()
     text = re.sub(r"^\`\`\`(?:json)?\\s*", "", text, flags=re.I)
@@ -84,12 +108,14 @@ def _extract_json(text):
         raise
 
 
-def call_json(system_prompt, user_prompt, temperature=0.3):
-    key_entries = _api_keys()
-    if not key_entries:
+def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
+    key, key_name = _api_key_for(section)
+    if not key:
         raise RuntimeError(
-            "Gemini is not connected yet. Add a Gemini API key in the deployment secrets."
+            "Gemini is not connected yet. Add the Gemini API keys in the deployment secrets."
         )
+
+    key_entries = [{"name": key_name or "configured_key", "value": key}]
 
     import requests
 
@@ -323,7 +349,7 @@ Return:
   "ending_payoff": ""
 }}
 """
-    out = call_json(TREATMENT_SYSTEM, prompt, 0.25)
+    out = call_json(TREATMENT_SYSTEM, prompt, 0.25, section="treatment")
     save_json(project_id, "treatment_json", out, "treatment_ready")
     return out
 
@@ -345,7 +371,7 @@ Return:
   "closing": ""
 }}
 """
-    out = call_json(SCRIPT_SYSTEM, prompt, 0.35)
+    out = call_json(SCRIPT_SYSTEM, prompt, 0.35, section="script")
     save_json(project_id, "script_json", out, "script_ready")
     return out
 
@@ -353,7 +379,7 @@ Return:
 def critique_script(project_id):
     p = get_project(project_id)
     script = load_json(p, "script_json", {})
-    out = call_json(CRITIQUE_SYSTEM, json.dumps(script, indent=2), 0.15)
+    out = call_json(CRITIQUE_SYSTEM, json.dumps(script, indent=2), 0.15, section="retention")
     save_json(project_id, "critique_json", out)
     return out
 
@@ -374,7 +400,7 @@ CHARACTER/WORLD BIBLE:
 
 Create as many useful visual scenes as needed for cinematic pacing.
 """
-    out = call_json(SCENE_SYSTEM, prompt, 0.2)
+    out = call_json(SCENE_SYSTEM, prompt, 0.2, section="scenes")
     for scene in out.get("scenes", []):
         scene.setdefault("production_status", "not_started")
     save_json(project_id, "scenes_json", out, "scenes_ready")
@@ -385,7 +411,7 @@ def make_package(project_id):
     p = get_project(project_id)
     script = load_json(p, "script_json", {})
     prompt = f"STORY: {p['story_name']}\nSCRIPT:\n{json.dumps(script, indent=2)}"
-    out = call_json(PACKAGE_SYSTEM, prompt, 0.55)
+    out = call_json(PACKAGE_SYSTEM, prompt, 0.55, section="youtube")
     save_json(project_id, "package_json", out)
     return out
 
@@ -422,7 +448,7 @@ Return:
    "identity_lock":"","negative_identity_lock":"","master_character_prompt":""
  }]
 }
-""", 0.2)
+""", 0.2, section="visual_bible")
 
     major_names = [x.get("name") for x in major.get("characters", [])]
     support = call_json(BIBLE_SYSTEM, context + f"""
@@ -447,7 +473,7 @@ Return:
    "group_identity_lock":"","negative_group_lock":"","master_group_prompt":""
  }}]
 }}
-""", 0.2)
+""", 0.2, section="visual_bible")
 
     locations = call_json(BIBLE_SYSTEM, context + f"""
 ESTABLISHED CHARACTERS: {json.dumps(major_names)}
@@ -467,7 +493,7 @@ Return:
    "environment_lock":"","master_environment_prompt":""
  }}]
 }}
-""", 0.2)
+""", 0.2, section="visual_bible")
 
     props = call_json(BIBLE_SYSTEM, context + f"""
 ESTABLISHED LOCATIONS: {json.dumps([x.get('name') for x in locations.get('locations', [])])}
@@ -484,7 +510,7 @@ Return:
  "historical_interpretation_notes":[],
  "generation_warnings":[]
 }}
-""", 0.2)
+""", 0.2, section="visual_bible")
 
     final = {
         "visual_direction": major.get("visual_direction", {}),
@@ -535,7 +561,7 @@ def narration_text(project_id):
 
 
 def list_tts_voices():
-    key = _api_key()
+    key, _ = _api_key_for("tts")
     if not key:
         return [
             {"id": "Algenib", "display_name": "Algenib"},
@@ -573,10 +599,10 @@ def generate_tts_bytes(
     voice_id="Algenib",
     style_instruction="",
 ):
-    key = _api_key()
+    key, _ = _api_key_for("tts")
     if not key:
         raise RuntimeError(
-            "AI is not connected yet. Add a Gemini API key from the app."
+            "The TTS Gemini project is not configured yet."
         )
 
     from google import genai
@@ -642,10 +668,10 @@ def generate_tts_bytes(
 
 
 def review_scene_frame(project_id, scene, image_bytes, mime_type):
-    key = _api_key()
+    key, _ = _api_key_for("vision")
     if not key:
         raise RuntimeError(
-            "AI is not connected yet. Add a Gemini API key from the app."
+            "The visual review Gemini project is not configured yet."
         )
 
     from google import genai
