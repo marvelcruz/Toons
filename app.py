@@ -1203,6 +1203,8 @@ if main_section == "🎞️ Scene Production":
         scene_data = load_json(project, "scenes_json", {})
         scenes = scene_data.get("scenes", [])
 
+        scene_error = None
+
         if st.button(
             "Build scene prompts"
             if not scenes
@@ -1210,9 +1212,20 @@ if main_section == "🎞️ Scene Production":
             type="primary",
             use_container_width=True,
         ):
-            with st.spinner("Breaking the story into production scenes..."):
-                plan_scenes(project["id"])
-            st.rerun()
+            try:
+                with st.spinner("Breaking the story into production scenes..."):
+                    plan_scenes(project["id"])
+                st.rerun()
+            except Exception as exc:
+                scene_error = str(exc)
+
+        if scene_error:
+            st.error(
+                "The scene plan could not be rebuilt right now. "
+                "Your episode is still safe."
+            )
+            with st.expander("Technical details"):
+                st.code(scene_error)
 
         if scenes:
             total_seconds = sum(
