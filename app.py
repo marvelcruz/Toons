@@ -1031,144 +1031,225 @@ if main_section == "🎨 Visual Bible":
                 st.code(visual_bible_error)
 
         if bible:
-            categories = {
-                "Main characters": (
+            categories = [
+                (
+                    "Characters",
                     "characters",
                     "master_character_prompt",
                     "identity_lock",
                 ),
-                "Supporting characters": (
+                (
+                    "Supporting characters",
                     "supporting_characters",
                     "master_character_prompt",
                     "identity_lock",
                 ),
-                "Groups & uniforms": (
+                (
+                    "Groups & uniforms",
                     "character_groups",
                     "master_group_prompt",
                     "group_identity_lock",
                 ),
-                "Locations": (
+                (
+                    "Locations",
                     "locations",
                     "master_environment_prompt",
                     "environment_lock",
                 ),
-                "Props": (
+                (
+                    "Props",
                     "props",
                     "master_prop_prompt",
                     None,
                 ),
-            }
+            ]
 
-            category = st.selectbox(
-                "What do you want to review?",
-                list(categories.keys()),
+            total_items = sum(
+                len(bible.get(key, []) or [])
+                for _, key, _, _ in categories
             )
+            approved_items = 0
 
-            key, prompt_key, lock_key = categories[category]
-            items = bible.get(key, [])
+            for _, key, _, _ in categories:
+                for item in bible.get(key, []) or []:
+                    name = item.get("name") or "Unnamed"
+                    if get_reference_asset(project["id"], key, name):
+                        approved_items += 1
 
-            if not items:
-                st.caption("No entries were created in this category.")
-            else:
-                names = [
-                    item.get("name") or f"Item {i + 1}"
-                    for i, item in enumerate(items)
-                ]
-
-                selected_name = st.selectbox(
-                    category,
-                    names,
-                    key=f"{project['id']}_{key}_selector",
+            st.markdown("## Complete Visual Bible")
+            st.write(
+                f"**{total_items} visual references found** · "
+                f"**{approved_items} approved** · "
+                f"**{max(total_items - approved_items, 0)} still need review**"
+            )
+            if total_items:
+                st.progress(
+                    approved_items / total_items,
+                    text=f"{approved_items} of {total_items} references approved",
                 )
 
-                item = items[names.index(selected_name)]
+            st.caption(
+                "Everything is shown below in one continuous sheet. "
+                "Review from top to bottom and approve references as you go."
+            )
+            st.divider()
 
-                st.markdown(f"## {selected_name}")
+            for category_label, key, prompt_key, lock_key in categories:
+                items = bible.get(key, []) or []
 
-                role = (
-                    item.get("role")
-                    or item.get("story_function")
-                    or item.get("story_purpose")
-                )
+                st.markdown(f"# {category_label}")
+                if not items:
+                    st.caption("No entries were created in this section.")
+                    st.divider()
+                    continue
 
-                if role:
-                    st.caption(role)
-
-                prompt = item.get(prompt_key)
-                if prompt:
-                    st.markdown("### Reference image prompt")
-                    st.caption(
-                        "Copy this into Google Flow to create the approved reference image."
+                for item_index, item in enumerate(items):
+                    selected_name = (
+                        item.get("name")
+                        or f"{category_label.rstrip('s')} {item_index + 1}"
                     )
-                    st.code(prompt, wrap_lines=True)
 
-                if lock_key and item.get(lock_key):
-                    st.markdown("### Continuity lock")
-                    st.caption(
-                        "This description is reused in scenes so the design does not drift."
+                    st.markdown(f"## {selected_name}")
+
+                    role = (
+                        item.get("role")
+                        or item.get("story_function")
+                        or item.get("story_purpose")
                     )
-                    st.code(item[lock_key], wrap_lines=True)
+                    if role:
+                        st.write(role)
 
-                if key == "character_groups":
-                    variation = item.get("allowed_individual_variation", [])
-                    if variation:
-                        st.markdown("### What may vary between members")
-                        for value in variation:
-                            st.write("•", value)
+                    # Show useful descriptive fields directly instead of hiding
+                    # them in JSON or dropdowns.
+                    hidden_fields = {
+                        "name",
+                        "role",
+                        "story_function",
+                        "story_purpose",
+                        prompt_key,
+                        lock_key,
+                        "negative_identity_lock",
+                        "negative_group_lock",
+                        "allowed_individual_variation",
+                    }
 
-                st.divider()
-                st.markdown("### Approved reference image")
-                st.caption(
-                    "Generate the image in Google Flow, then upload the version you want "
-                    "ToonScripture to treat as the official visual reference."
-                )
+                    for field_name, field_value in item.items():
+                        if field_name in hidden_fields:
+                            continue
+                        if field_value in (None, "", [], {}):
+                            continue
 
-                saved_reference = get_reference_asset(
-                    project["id"],
-                    key,
-                    selected_name,
-                )
+                        label = field_name.replace("_", " ").strip().title()
+                        st.markdown(f"**{label}**")
 
-                if saved_reference and saved_reference.get("signed_url"):
-                    st.image(
-                        saved_reference["signed_url"],
-                        caption="Approved reference",
-                        width=360,
-                    )
-                    st.success("This reference is locked for continuity.")
+                        if isinstance(field_value, list):
+                            for value in field_value:
+                                st.write("•", value)
+                        elif isinstance(field_value, dict):
+                            for sub_key, sub_value in field_value.items():
+                                sub_label = (
+                                    str(sub_key)
+                                    .replace("_", " ")
+                                    .strip()
+                                    .title()
+                                )
+                                st.write(f"**{sub_label}:** {sub_value}")
+                        else:
+                            st.write(field_value)
 
-                uploaded_reference = st.file_uploader(
-                    "Upload approved reference image",
-                    type=["png", "jpg", "jpeg", "webp"],
-                    key=f"reference_upload_{project['id']}_{key}_{selected_name}",
-                )
-
-                if uploaded_reference and st.button(
-                    "Use this as the official reference",
-                    type="primary",
-                    use_container_width=True,
-                    key=f"save_reference_{project['id']}_{key}_{selected_name}",
-                ):
-                    with st.spinner("Saving the approved reference..."):
-                        save_reference_asset(
-                            project_id=project["id"],
-                            reference_type=key,
-                            name=selected_name,
-                            file_bytes=uploaded_reference.getvalue(),
-                            filename=uploaded_reference.name,
-                            content_type=uploaded_reference.type or "application/octet-stream",
-                            master_prompt=prompt,
-                            identity_lock=item.get(lock_key) if lock_key else None,
-                            negative_lock=(
-                                item.get("negative_identity_lock")
-                                or item.get("negative_group_lock")
-                            ),
+                    prompt = item.get(prompt_key)
+                    if prompt:
+                        st.markdown("### Reference image prompt")
+                        st.caption(
+                            "Copy this into Google Flow to create the approved reference image."
                         )
-                    st.success("Reference saved.")
-                    st.rerun()
+                        st.code(prompt, wrap_lines=True)
 
-                with st.expander("See all visual details"):
-                    st.json(item)
+                    if lock_key and item.get(lock_key):
+                        st.markdown("### Continuity lock")
+                        st.caption(
+                            "This description is reused in scenes so the design does not drift."
+                        )
+                        st.code(item[lock_key], wrap_lines=True)
+
+                    if key == "character_groups":
+                        variation = item.get(
+                            "allowed_individual_variation",
+                            [],
+                        )
+                        if variation:
+                            st.markdown(
+                                "### What may vary between members"
+                            )
+                            for value in variation:
+                                st.write("•", value)
+
+                    st.markdown("### Approved reference image")
+                    saved_reference = get_reference_asset(
+                        project["id"],
+                        key,
+                        selected_name,
+                    )
+
+                    if saved_reference and saved_reference.get("signed_url"):
+                        st.image(
+                            saved_reference["signed_url"],
+                            caption="Approved reference",
+                            width=360,
+                        )
+                        st.success("This reference is locked for continuity.")
+                    else:
+                        st.caption(
+                            "Generate this reference in Google Flow, "
+                            "then upload the version you want to lock."
+                        )
+
+                    uploaded_reference = st.file_uploader(
+                        f"Upload approved reference image for {selected_name}",
+                        type=["png", "jpg", "jpeg", "webp"],
+                        key=(
+                            f"reference_upload_{project['id']}_"
+                            f"{key}_{item_index}"
+                        ),
+                    )
+
+                    if uploaded_reference and st.button(
+                        f"Use this as the official reference for {selected_name}",
+                        type="primary",
+                        use_container_width=True,
+                        key=(
+                            f"save_reference_{project['id']}_"
+                            f"{key}_{item_index}"
+                        ),
+                    ):
+                        with st.spinner(
+                            f"Saving {selected_name} as the approved reference..."
+                        ):
+                            save_reference_asset(
+                                project_id=project["id"],
+                                reference_type=key,
+                                name=selected_name,
+                                file_bytes=uploaded_reference.getvalue(),
+                                filename=uploaded_reference.name,
+                                content_type=(
+                                    uploaded_reference.type
+                                    or "application/octet-stream"
+                                ),
+                                master_prompt=prompt,
+                                identity_lock=(
+                                    item.get(lock_key)
+                                    if lock_key
+                                    else None
+                                ),
+                                negative_lock=(
+                                    item.get("negative_identity_lock")
+                                    or item.get("negative_group_lock")
+                                ),
+                            )
+                        st.success("Reference saved.")
+                        st.rerun()
+
+                    st.divider()
 
         if bible:
             st.divider()
