@@ -33,7 +33,6 @@ from workflow import (
     make_package,
     _api_key,
     _api_key_count,
-    _api_key_names,
     narration_text,
     list_tts_voices,
     generate_tts_bytes,
@@ -224,32 +223,21 @@ with st.sidebar:
         if _api_key():
             count = _api_key_count()
             st.success("AI tools are connected", icon="✅")
-            if count > 1:
-                st.caption(
-                    f"1 primary Gemini project + {count - 1} backup project"
-                    + ("s" if count - 1 != 1 else "")
-                )
+            st.caption(
+                f"{count} configured Gemini project"
+                + ("s" if count != 1 else "")
+            )
 
-                names = _api_key_names()
-                pretty = {"GEMINI_API_KEY": "Default project"}
-                for letter in "ABCDEFGHI":
-                    pretty[f"GEMINI_API_KEY_{letter}"] = f"Project {letter}"
-
-                selected_name = st.selectbox(
-                    "Primary AI project",
-                    names,
-                    index=0,
-                    format_func=lambda name: pretty.get(name, name),
-                    help=(
-                        "Choose which configured Gemini project ToonScripture should use first. "
-                        "This choice only affects this browser session."
-                    ),
-                    key="gemini_primary_picker",
-                )
-
-                if selected_name != names[0]:
-                    st.session_state.gemini_primary_name = selected_name
-                    st.rerun()
+            with st.expander("Which AI project does each section use?"):
+                st.write("**Shape the story** → Project A")
+                st.write("**Write the script** → Project B")
+                st.write("**Viewer retention** → Project C")
+                st.write("**Visual Bible** → Project D")
+                st.write("**Scene Production** → Project E")
+                st.write("**YouTube package** → Project F")
+                st.write("**Narration Audio** → Project G")
+                st.write("**Frame review** → Project H")
+                st.write("**Project I** → Reserved spare")
         else:
             st.warning(
                 "AI is not configured on the server yet. "
