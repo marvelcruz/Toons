@@ -245,7 +245,36 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
                         fail_over_to_next_key = True
                         break
 
-                    if status in (400, 404):
+                    if status == 400:
+                        body = response.text.lower()
+                        key_problem_markers = [
+                            "api key not valid",
+                            "api_key_invalid",
+                            "permission denied",
+                            "permission_denied",
+                            "service disabled",
+                            "service_disabled",
+                            "has not been used",
+                            "access not configured",
+                        ]
+                        if any(marker in body for marker in key_problem_markers):
+                            print(
+                                f"[ToonScripture] {section}: {key_entry['name']} rejected by Google; "
+                                "trying reserved spare if available.",
+                                flush=True,
+                            )
+                            fail_over_to_next_key = True
+                            break
+
+                        # A 400 can also be model/config related. Try the next model first.
+                        print(
+                            f"[ToonScripture] {section}: model {model} returned HTTP 400 on "
+                            f"{key_entry['name']}: {response.text[:500]}",
+                            flush=True,
+                        )
+                        break
+
+                    if status == 404:
                         break
 
                     if status >= 500:
