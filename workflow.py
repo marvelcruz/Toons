@@ -74,12 +74,12 @@ SECTION_KEY_MAP = {
     "treatment": "GEMINI_API_KEY_A",
     "script": "GEMINI_API_KEY_B",
     "retention": "GEMINI_API_KEY_C",
-    "visual_bible": "GEMINI_API_KEY_D",
+    "visual_bible": "GEMINI_API_KEY_I",
     "scenes": "GEMINI_API_KEY_E",
     "youtube": "GEMINI_API_KEY_F",
     "tts": "GEMINI_API_KEY_G",
     "vision": "GEMINI_API_KEY_H",
-    "spare": "GEMINI_API_KEY_I",
+    "spare": "GEMINI_API_KEY_D",
 }
 
 
@@ -100,7 +100,7 @@ def _api_keys_for(section):
     if section != "spare":
         selected.extend(
             item for item in configured
-            if item["name"] == "GEMINI_API_KEY_I"
+            if item["name"] == "GEMINI_API_KEY_D"
             and all(existing["name"] != item["name"] for existing in selected)
         )
 
