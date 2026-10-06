@@ -294,6 +294,50 @@ def get_project(project_id):
     return _local_row(row)
 
 
+def set_project_status(project_id, status):
+    """Set an episode-level workspace status such as archived or idea."""
+    if using_supabase():
+        (
+            _client()
+            .table("projects")
+            .update({"status": status})
+            .eq("id", project_id)
+            .execute()
+        )
+        return
+
+    con = _local_connect()
+    con.execute(
+        """
+        UPDATE projects
+        SET status=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id=?
+        """,
+        (status, project_id),
+    )
+    con.commit()
+    con.close()
+
+
+def inferred_project_status(project):
+    """Return the most advanced workflow status represented by saved project data."""
+    if not project:
+        return "idea"
+    if project.get("package_json"):
+        return "package_ready"
+    if project.get("scenes_json"):
+        return "scenes_ready"
+    if project.get("character_bible_json"):
+        return "visual_bible_ready"
+    if project.get("critique_json"):
+        return "retention_ready"
+    if project.get("script_json"):
+        return "script_ready"
+    if project.get("treatment_json"):
+        return "treatment_ready"
+    return "idea"
+
+
 def create_project(
     story_name,
     bible_reference="",
