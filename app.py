@@ -1847,3 +1847,16 @@ with page_root.container():
                 "These downloads are portable copies for your own archive."
             )
 
+            st.divider()
+            st.markdown("### Ready for the next story?")
+            st.caption(
+                "Start another Bible story without leaving the workflow."
+            )
+            if st.button(
+                "Start next story",
+                type="primary",
+                use_container_width=True,
+                key=f"start_next_story_{project['id']}",
+            ):
+                start_new_episode_dialog()
+
