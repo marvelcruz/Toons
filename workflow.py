@@ -83,15 +83,38 @@ SECTION_KEY_MAP = {
 }
 
 
-def _api_key_for(section):
+def _api_keys_for(section):
+    configured = _api_keys()
     target = SECTION_KEY_MAP.get(section)
-    if target:
-        for item in _api_keys():
-            if item["name"] == target:
-                return item["value"], target
 
-    key = _api_key()
-    return key, (_api_key_names()[0] if _api_key_names() else "")
+    selected = []
+    if target:
+        selected.extend(
+            item for item in configured
+            if item["name"] == target
+        )
+
+    # Project I is the reserved spare. It is used only when the assigned
+    # project is invalid, unavailable, or has a service-side failure.
+    # It is never used to bypass a 429 quota response.
+    if section != "spare":
+        selected.extend(
+            item for item in configured
+            if item["name"] == "GEMINI_API_KEY_I"
+            and all(existing["name"] != item["name"] for existing in selected)
+        )
+
+    if not selected and configured:
+        selected.append(configured[0])
+
+    return selected
+
+
+def _api_key_for(section):
+    entries = _api_keys_for(section)
+    if not entries:
+        return "", ""
+    return entries[0]["value"], entries[0]["name"]
 
 
 def _extract_json(text):
@@ -109,13 +132,11 @@ def _extract_json(text):
 
 
 def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
-    key, key_name = _api_key_for(section)
-    if not key:
+    key_entries = _api_keys_for(section)
+    if not key_entries:
         raise RuntimeError(
             "Gemini is not connected yet. Add the Gemini API keys in the deployment secrets."
         )
-
-    key_entries = [{"name": key_name or "configured_key", "value": key}]
 
     import requests
 
