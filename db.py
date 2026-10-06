@@ -459,6 +459,91 @@ def list_episode_metrics(project_id):
     return result.data or []
 
 
+def record_ai_usage(
+    project_name,
+    section_name,
+    model_name,
+    outcome,
+    http_status=None,
+):
+    if not using_supabase():
+        return None
+
+    payload = {
+        "project_name": project_name,
+        "section_name": section_name,
+        "model_name": model_name,
+        "outcome": outcome,
+        "http_status": http_status,
+    }
+
+    try:
+        _client().table("ai_usage_events").insert(payload).execute()
+    except Exception:
+        pass
+
+    return payload
+
+
+def ai_usage_today():
+    if not using_supabase():
+        return []
+
+    from datetime import datetime, timezone
+
+    start = datetime.now(timezone.utc).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    ).isoformat()
+
+    result = (
+        _client()
+        .table("ai_usage_events")
+        .select("*")
+        .gte("created_at", start)
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    rows = result.data or []
+    summary = {}
+
+    for row in rows:
+        name = row.get("project_name") or "Unknown"
+        item = summary.setdefault(
+            name,
+            {
+                "project_name": name,
+                "requests": 0,
+                "successes": 0,
+                "errors": 0,
+                "last_status": None,
+                "last_section": None,
+                "last_model": None,
+                "last_http_status": None,
+                "last_used_at": None,
+            },
+        )
+
+        item["requests"] += 1
+
+        if row.get("outcome") == "success":
+            item["successes"] += 1
+        else:
+            item["errors"] += 1
+
+        if item["last_used_at"] is None:
+            item["last_status"] = row.get("outcome")
+            item["last_section"] = row.get("section_name")
+            item["last_model"] = row.get("model_name")
+            item["last_http_status"] = row.get("http_status")
+            item["last_used_at"] = row.get("created_at")
+
+    return list(summary.values())
+
+
 # -------------------------------------------------------------------
 # GENERIC PROJECT ASSETS
 # -------------------------------------------------------------------
