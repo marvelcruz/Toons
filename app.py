@@ -245,10 +245,10 @@ with st.sidebar:
             )
 
             if _openrouter_key():
-                st.success("Qwen via OpenRouter is connected", icon="✅")
-                st.caption("Free Qwen model is available as the second AI reviewer.")
+                st.success("OpenRouter Free AI is connected", icon="✅")
+                st.caption("A free OpenRouter model is available as the second AI reviewer.")
             else:
-                st.error("Qwen via OpenRouter is NOT connected")
+                st.error("OpenRouter Free AI is NOT connected")
                 st.caption(
                     "Render is not detecting OPENROUTER_API_KEY in the running service."
                 )
