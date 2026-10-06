@@ -474,6 +474,28 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
     gemini_output = None
     qwen_output = None
     errors = []
+    has_qwen = bool(_openrouter_key())
+
+    print(
+        f"[ToonScripture] {section}: OpenRouter configured = {has_qwen}",
+        flush=True,
+    )
+
+    # Scene Production tries Qwen first so an exhausted Gemini scene project
+    # cannot prevent the second model from participating.
+    if section == "scenes" and has_qwen:
+        try:
+            print("[ToonScripture] scenes: calling Qwen via OpenRouter", flush=True)
+            qwen_output = _call_qwen_json(
+                system_prompt,
+                user_prompt,
+                temperature=temperature,
+                section=section,
+            )
+            print("[ToonScripture] scenes: Qwen completed", flush=True)
+        except Exception as exc:
+            errors.append(f"Qwen: {exc}")
+            print(f"[ToonScripture] scenes: Qwen failed: {exc}", flush=True)
 
     try:
         gemini_output = _call_gemini_only(
@@ -485,16 +507,28 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
     except Exception as exc:
         errors.append(f"Gemini: {exc}")
 
-    if _openrouter_key():
+    if section != "scenes" and has_qwen:
         try:
+            print(
+                f"[ToonScripture] {section}: calling Qwen via OpenRouter",
+                flush=True,
+            )
             qwen_output = _call_qwen_json(
                 system_prompt,
                 user_prompt,
                 temperature=temperature,
                 section=section,
             )
+            print(
+                f"[ToonScripture] {section}: Qwen completed",
+                flush=True,
+            )
         except Exception as exc:
             errors.append(f"Qwen: {exc}")
+            print(
+                f"[ToonScripture] {section}: Qwen failed: {exc}",
+                flush=True,
+            )
 
     if gemini_output is not None and qwen_output is not None:
         try:
@@ -508,8 +542,6 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
             )
         except Exception as exc:
             errors.append(f"Synthesis: {exc}")
-            # If synthesis fails, prefer Gemini because research-heavy Gemini
-            # calls can use Google Search grounding in this workflow.
             return gemini_output
 
     if gemini_output is not None:
@@ -517,6 +549,11 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
 
     if qwen_output is not None:
         return qwen_output
+
+    if not has_qwen:
+        errors.append(
+            "OpenRouter key was not detected by the running Render service."
+        )
 
     raise RuntimeError(
         "Neither Gemini nor Qwen could complete this step. "
