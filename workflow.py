@@ -38,6 +38,20 @@ def _api_keys():
     except Exception:
         pass
 
+    try:
+        import streamlit as st
+        selected = str(
+            st.session_state.get("gemini_primary_name", "") or ""
+        ).strip()
+
+        if selected:
+            chosen = [item for item in keys if item["name"] == selected]
+            others = [item for item in keys if item["name"] != selected]
+            if chosen:
+                keys = chosen + others
+    except Exception:
+        pass
+
     return keys
 
 
