@@ -369,7 +369,9 @@ Return valid JSON only with score_100, strengths, problems, recommended_cuts, re
 
 SCENE_SYSTEM = """
 You are ToonScripture's scene planner and prompt engineer.
-Break the approved script into many short generation-ready scenes.
+Turn one approved narration segment into an exact sequence of short Flow-ready clips.
+Allowed clip lengths are ONLY 4, 5, 8, or 10 seconds.
+Create exactly the requested number of clips, in narration order, and cover the entire supplied segment.
 Every scene MUST contain:
 scene_number, scene_title, narration, duration_seconds,
 start_state, dominant_action, end_state,
@@ -468,21 +470,77 @@ def plan_scenes(project_id):
     p = get_project(project_id)
     script = load_json(p, "script_json", {})
     bible = load_json(p, "character_bible_json", {})
-    prompt = f"""
-STORY: {p['story_name']}
-TARGET RUNTIME: {p['target_minutes']} minutes
 
-SCRIPT:
-{json.dumps(script, indent=2)}
+    segments = []
+    if script.get("hook"):
+        segments.append(("Opening hook", script["hook"]))
+    for section in script.get("sections", []):
+        text = section.get("narration") or ""
+        dialogue = section.get("dialogue") or []
+        if isinstance(dialogue, list):
+            dialogue_text = " ".join(
+                line if isinstance(line, str)
+                else str(line.get("text") or line.get("line") or line.get("dialogue") or "")
+                for line in dialogue
+            )
+            text = (text + " " + dialogue_text).strip()
+        if text:
+            segments.append((section.get("name") or "Story section", text))
+    if script.get("closing"):
+        segments.append(("Closing", script["closing"]))
+
+    target_seconds = int(round(float(p["target_minutes"]) * 60))
+    total_words = max(1, sum(len(text.split()) for _, text in segments))
+    all_scenes = []
+    next_number = 1
+
+    for index, (segment_name, segment_text) in enumerate(segments):
+        words = max(1, len(segment_text.split()))
+        if index == len(segments) - 1:
+            used = sum(int(s.get("duration_seconds") or 0) for s in all_scenes)
+            segment_seconds = max(4, target_seconds - used)
+        else:
+            segment_seconds = max(4, round(target_seconds * words / total_words))
+
+        scene_count = max(1, round(segment_seconds / 8))
+        prompt = f"""
+STORY: {p['story_name']}
+FULL EPISODE TARGET: {target_seconds} seconds
+SEGMENT: {segment_name}
+SEGMENT NARRATION:
+{segment_text}
 
 CHARACTER/WORLD BIBLE:
 {json.dumps(bible, indent=2)}
 
-Create as many useful visual scenes as needed for cinematic pacing.
+Create EXACTLY {scene_count} clips for this segment.
+Use ONLY 4, 5, 8, or 10 seconds for duration_seconds.
+Keep the narration in order and visually cover every part of this segment.
+Choose shorter clips for fast action and longer clips for reflective or establishing beats.
 """
-    out = call_json(SCENE_SYSTEM, prompt, 0.2, section="scenes")
-    for scene in out.get("scenes", []):
-        scene.setdefault("production_status", "not_started")
+        part = call_json(SCENE_SYSTEM, prompt, 0.2, section="scenes")
+        scenes = part.get("scenes", [])
+
+        for scene in scenes:
+            duration = int(scene.get("duration_seconds") or 8)
+            scene["duration_seconds"] = min(
+                (4, 5, 8, 10),
+                key=lambda value: abs(value - duration),
+            )
+            scene["scene_number"] = next_number
+            scene.setdefault("production_status", "not_started")
+            all_scenes.append(scene)
+            next_number += 1
+
+    out = {
+        "target_runtime_seconds": target_seconds,
+        "planned_runtime_seconds": sum(
+            int(scene.get("duration_seconds") or 0)
+            for scene in all_scenes
+        ),
+        "allowed_clip_lengths": [4, 5, 8, 10],
+        "scenes": all_scenes,
+    }
     save_json(project_id, "scenes_json", out, "scenes_ready")
     return out
 
