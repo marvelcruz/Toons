@@ -297,7 +297,7 @@ with st.sidebar:
                     state = "UNUSED"
 
                 st.markdown(
-                    f"**Project {letter} · {label}**  \\n"
+                    f"**Project {letter} · {label}**  \n"
                     f"{requests_used}/{usage_guide} tracked today · {state}"
                 )
 
@@ -329,6 +329,156 @@ with st.sidebar:
 
 
 
+
+
+
+@st.dialog("Start a new episode", width="large")
+def start_new_episode_dialog():
+    selected_series_filter = st.session_state.get("selected_series_filter", "")
+
+    if selected_series_filter:
+        st.info(f"Showing stories from: {selected_series_filter}")
+        if st.button("Show all stories", key="dialog_clear_series_filter"):
+            st.session_state.pop("selected_series_filter", None)
+            st.rerun()
+
+    search = st.text_input(
+        "Search the catalogue",
+        placeholder="Example: Daniel, Esther, Moses, Ruth...",
+        key="dialog_catalog_search",
+    )
+
+    rows = list_catalog_people(
+        search=search,
+        playlist=selected_series_filter or "",
+        limit=1000,
+    )
+    rows = [
+        row for row in rows
+        if (row.get("production_status") or "not_started") != "completed"
+    ]
+
+    if rows:
+        choices = {
+            row["id"]: (
+                f"{row['name']} · "
+                f"{row.get('bible_references') or 'Bible reference not set'}"
+            )
+            for row in rows
+        }
+
+        selected_id = st.selectbox(
+            "Choose a story or character",
+            list(choices.keys()),
+            format_func=lambda cid: choices[cid],
+            key="dialog_story_choice",
+        )
+
+        selected = next(row for row in rows if row["id"] == selected_id)
+
+        st.markdown(f"### {selected['name']}")
+        if selected.get("story_role"):
+            st.write(selected["story_role"])
+
+        info1, info2, info3 = st.columns(3)
+        with info1:
+            st.markdown("**Bible**")
+            st.write(selected.get("bible_references") or "Not set")
+        with info2:
+            st.markdown("**Priority**")
+            st.write(selected.get("priority") or "Not set")
+        with info3:
+            st.markdown("**Series**")
+            st.write(selected.get("playlist_series") or "Not assigned")
+
+        if selected.get("primary_environment"):
+            st.markdown(
+                f"**Main setting:** {selected['primary_environment']}"
+            )
+        if selected.get("youtube_hook"):
+            st.info(selected["youtube_hook"])
+
+        episode_title = st.text_input(
+            "Episode title",
+            value=selected["name"],
+            help="Make it specific, e.g. Daniel in the Lions' Den.",
+            key="dialog_episode_title",
+        )
+        bible_reference = st.text_input(
+            "Bible reference",
+            value=selected.get("bible_references") or "",
+            key="dialog_bible_reference",
+        )
+        runtime = st.select_slider(
+            "How long should the episode be?",
+            options=[4.0, 6.0, 8.0, 10.0, 12.0, 15.0],
+            value=8.0,
+            format_func=lambda x: f"{int(x)} minutes",
+            key="dialog_runtime",
+        )
+
+        if st.button(
+            "Create this episode",
+            type="primary",
+            use_container_width=True,
+            key="dialog_create_episode",
+        ):
+            pid = create_project(
+                episode_title,
+                bible_reference,
+                runtime,
+                "long_form",
+            )
+            link_project(
+                pid,
+                person_id=selected_id,
+                episode_title=episode_title,
+            )
+            set_catalog_production_status(selected_id, "in_progress")
+            st.session_state.project_id = pid
+            st.session_state.main_section = "✍️ Story & Script"
+            st.rerun()
+    else:
+        st.warning("No matching story was found.")
+
+    st.divider()
+    st.markdown("### Or create one manually")
+
+    manual_title = st.text_input(
+        "Story title",
+        key="dialog_manual_title",
+        placeholder="Example: Daniel in the Lions' Den",
+    )
+    manual_reference = st.text_input(
+        "Bible reference",
+        key="dialog_manual_reference",
+        placeholder="Example: Daniel 6",
+    )
+    manual_runtime = st.select_slider(
+        "Target length",
+        options=[4.0, 6.0, 8.0, 10.0, 12.0, 15.0],
+        value=8.0,
+        format_func=lambda x: f"{int(x)} minutes",
+        key="dialog_manual_runtime",
+    )
+
+    if st.button(
+        "Create manual episode",
+        use_container_width=True,
+        key="dialog_create_manual",
+    ):
+        if not manual_title.strip():
+            st.error("Enter a story title first.")
+        else:
+            pid = create_project(
+                manual_title,
+                manual_reference,
+                manual_runtime,
+                "long_form",
+            )
+            st.session_state.project_id = pid
+            st.session_state.main_section = "✍️ Story & Script"
+            st.rerun()
 
 
 
@@ -417,192 +567,18 @@ if main_section == "🏠 Home":
                 f"and {result['series_total']} series were added."
             )
             st.rerun()
-
     else:
-        st.markdown("## Start a new episode")
-        st.write(
-            "Search for the Bible person or story you want to work on. "
-            "Then give the episode a specific title."
+        st.markdown("## Start something new")
+        st.caption(
+            "Episode creation stays on Home and never appears inside production pages."
         )
-
-        selected_series_filter = st.session_state.get("selected_series_filter", "")
-
-        if selected_series_filter:
-            st.info(f"Showing stories from: {selected_series_filter}")
-            if st.button(
-                "Show all stories",
-                key="clear_series_filter",
-            ):
-                st.session_state.pop("selected_series_filter", None)
-                st.rerun()
-
-        search = st.text_input(
-            "Search the catalogue",
-            placeholder="Example: Daniel, Esther, Moses, Ruth...",
-        )
-
-        rows = list_catalog_people(
-            search=search,
-            playlist=selected_series_filter or "",
-            limit=1000,
-        )
-
-        rows = [
-            row for row in rows
-            if (row.get("production_status") or "not_started") != "completed"
-        ]
-
-        if rows:
-            choices = {
-                row["id"]: (
-                    f"{row['name']} · "
-                    f"{row.get('bible_references') or 'Bible reference not set'}"
-                )
-                for row in rows
-            }
-
-            selected_id = st.selectbox(
-                "Choose a story or character",
-                list(choices.keys()),
-                format_func=lambda cid: choices[cid],
-            )
-
-            selected = next(row for row in rows if row["id"] == selected_id)
-
-            st.markdown(f"### {selected['name']}")
-
-            if selected.get("story_role"):
-                st.write(selected["story_role"])
-
-            info1, info2, info3 = st.columns(3)
-
-            with info1:
-                st.markdown("**Bible**")
-                st.write(selected.get("bible_references") or "Not set")
-
-            with info2:
-                st.markdown("**Priority**")
-                st.write(selected.get("priority") or "Not set")
-
-            with info3:
-                st.markdown("**Series**")
-                st.write(selected.get("playlist_series") or "Not assigned")
-
-            if selected.get("primary_environment"):
-                st.markdown(
-                    f"**Main setting:** {selected['primary_environment']}"
-                )
-
-            if selected.get("youtube_hook"):
-                st.info(selected["youtube_hook"])
-
-            st.markdown("### Name this episode")
-
-            episode_title = st.text_input(
-                "Episode title",
-                value=selected["name"],
-                help="Make it specific, e.g. Daniel in the Lions' Den.",
-            )
-
-            bible_reference = st.text_input(
-                "Bible reference",
-                value=selected.get("bible_references") or "",
-            )
-
-            runtime = st.select_slider(
-                "How long should the episode be?",
-                options=[4.0, 6.0, 8.0, 10.0, 12.0, 15.0],
-                value=8.0,
-                format_func=lambda x: f"{int(x)} minutes",
-            )
-
-            if st.button(
-                "Create this episode",
-                type="primary",
-                use_container_width=True,
-            ):
-                pid = create_project(
-                    episode_title,
-                    bible_reference,
-                    runtime,
-                    "long_form",
-                )
-                link_project(
-                    pid,
-                    person_id=selected_id,
-                    episode_title=episode_title,
-                )
-                set_catalog_production_status(
-                    selected_id,
-                    "in_progress",
-                )
-                st.session_state.project_id = pid
-                st.success("Episode created.")
-                st.rerun()
-        else:
-            st.warning("No matching story was found.")
-
-        with st.expander("Browse series ideas"):
-            st.caption(
-                "Choose a series to filter the story list above."
-            )
-
-            for item in list_series():
-                st.markdown(f"**{item['series_name']}**")
-
-                if item.get("core_concept"):
-                    st.write(item["core_concept"])
-
-                if item.get("best_starter_episodes"):
-                    st.caption(
-                        "Good starting episodes: "
-                        + str(item["best_starter_episodes"])
-                    )
-
-                if st.button(
-                    f"Explore {item['series_name']}",
-                    key=f"series_{item['id']}",
-                    use_container_width=True,
-                ):
-                    st.session_state.selected_series_filter = item["series_name"]
-                    st.rerun()
-
-                st.divider()
-
-    with st.expander("Create an episode without the catalogue"):
-        manual_title = st.text_input(
-            "Story title",
-            key="manual_title",
-            placeholder="Example: Daniel in the Lions' Den",
-        )
-        manual_reference = st.text_input(
-            "Bible reference",
-            key="manual_reference",
-            placeholder="Example: Daniel 6",
-        )
-        manual_runtime = st.select_slider(
-            "Target length",
-            options=[4.0, 6.0, 8.0, 10.0, 12.0, 15.0],
-            value=8.0,
-            format_func=lambda x: f"{int(x)} minutes",
-            key="manual_runtime",
-        )
-
         if st.button(
-            "Create manual episode",
+            "Start a new episode",
+            type="primary",
             use_container_width=True,
+            key="open_new_episode_dialog",
         ):
-            if not manual_title.strip():
-                st.error("Enter a story title first.")
-            else:
-                pid = create_project(
-                    manual_title,
-                    manual_reference,
-                    manual_runtime,
-                    "long_form",
-                )
-                st.session_state.project_id = pid
-                st.rerun()
+            start_new_episode_dialog()
 
 
 project = (
