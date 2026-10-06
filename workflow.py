@@ -6,33 +6,48 @@ import time
 from db import get_project, load_json, save_json
 
 
-def _api_key():
+def _api_keys():
+    keys = []
+
+    def add(name, value):
+        value = str(value or "").strip()
+        if value and all(item["value"] != value for item in keys):
+            keys.append({"name": name, "value": value})
+
     try:
         import streamlit as st
-        session_key = str(st.session_state.get("gemini_api_key", "") or "").strip()
-        if session_key:
-            return session_key
+        session_key = st.session_state.get("gemini_api_key", "")
+        add("browser_session", session_key)
     except Exception:
         pass
 
-    key = os.getenv("GEMINI_API_KEY", "").strip()
-    if key:
-        return key
+    add("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
+
     for letter in "ABCDEFGHI":
-        key = os.getenv(f"GEMINI_API_KEY_{letter}", "").strip()
-        if key:
-            return key
+        name = f"GEMINI_API_KEY_{letter}"
+        add(name, os.getenv(name, ""))
+
     try:
         import streamlit as st
         if "GEMINI_API_KEY" in st.secrets:
-            return str(st.secrets["GEMINI_API_KEY"])
+            add("GEMINI_API_KEY", st.secrets["GEMINI_API_KEY"])
         for letter in "ABCDEFGHI":
             name = f"GEMINI_API_KEY_{letter}"
             if name in st.secrets:
-                return str(st.secrets[name])
+                add(name, st.secrets[name])
     except Exception:
         pass
-    return ""
+
+    return keys
+
+
+def _api_key():
+    keys = _api_keys()
+    return keys[0]["value"] if keys else ""
+
+
+def _api_key_count():
+    return len(_api_keys())
 
 
 def _extract_json(text):
@@ -50,10 +65,10 @@ def _extract_json(text):
 
 
 def call_json(system_prompt, user_prompt, temperature=0.3):
-    key = _api_key()
-    if not key:
+    key_entries = _api_keys()
+    if not key_entries:
         raise RuntimeError(
-            "Gemini is not connected yet. Add GEMINI_API_KEY in the app's deployment secrets."
+            "Gemini is not connected yet. Add a Gemini API key in the deployment secrets."
         )
 
     import requests
@@ -79,9 +94,7 @@ def call_json(system_prompt, user_prompt, temperature=0.3):
             models.append(model)
 
     payload = {
-        "systemInstruction": {
-            "parts": [{"text": system_prompt}]
-        },
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": [
             {
                 "role": "user",
@@ -96,88 +109,115 @@ def call_json(system_prompt, user_prompt, temperature=0.3):
 
     last_error = None
 
-    for model in models:
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent"
-        )
+    # Primary project is the first configured key.
+    # Backup projects are used only for auth/revocation/network/service failures.
+    # A 429 quota response intentionally stops here rather than rotating projects.
+    for key_index, key_entry in enumerate(key_entries):
+        key = key_entry["value"]
+        fail_over_to_next_key = False
 
-        for attempt in range(3):
-            try:
-                response = requests.post(
-                    url,
-                    headers={
-                        "x-goog-api-key": key,
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                    timeout=120,
-                )
+        for model in models:
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent"
+            )
 
-                if response.ok:
-                    data = response.json()
-                    candidates = data.get("candidates") or []
-                    if not candidates:
-                        raise RuntimeError(
-                            "Google returned no treatment text. Please try again."
-                        )
-
-                    parts = (
-                        candidates[0]
-                        .get("content", {})
-                        .get("parts", [])
+            for attempt in range(3):
+                try:
+                    response = requests.post(
+                        url,
+                        headers={
+                            "x-goog-api-key": key,
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                        timeout=120,
                     )
-                    text = "".join(
-                        str(part.get("text") or "")
-                        for part in parts
-                    ).strip()
 
-                    if not text:
+                    if response.ok:
+                        data = response.json()
+                        candidates = data.get("candidates") or []
+                        if not candidates:
+                            raise RuntimeError(
+                                "Google returned no generated text. Please try again."
+                            )
+
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        text = "".join(
+                            str(part.get("text") or "")
+                            for part in parts
+                        ).strip()
+
+                        if not text:
+                            raise RuntimeError(
+                                "Google returned an empty response. Please try again."
+                            )
+
+                        return _extract_json(text)
+
+                    status = response.status_code
+                    last_error = RuntimeError(
+                        f"Gemini returned HTTP {status}: {response.text[:800]}"
+                    )
+
+                    if status == 429:
                         raise RuntimeError(
-                            "Google returned an empty response. Please try again."
+                            "The primary Gemini API project's quota is temporarily exhausted. "
+                            "ToonScripture did not switch projects automatically. "
+                            "Please retry later or increase quota on the primary project."
                         )
 
-                    return _extract_json(text)
+                    if status in (401, 403):
+                        fail_over_to_next_key = True
+                        break
 
-                last_error = RuntimeError(
-                    f"Gemini returned HTTP {response.status_code}: {response.text[:800]}"
-                )
+                    if status == 503:
+                        if attempt < 2:
+                            time.sleep(2 * (attempt + 1))
+                            continue
+                        fail_over_to_next_key = True
+                        break
 
-                if response.status_code == 503 and attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-                    continue
+                    if status in (400, 404):
+                        break
 
-                if response.status_code in (400, 404, 503):
+                    if status >= 500:
+                        if attempt < 2:
+                            time.sleep(2 * (attempt + 1))
+                            continue
+                        fail_over_to_next_key = True
+                        break
+
+                    raise last_error
+
+                except requests.Timeout as exc:
+                    last_error = exc
+                    if attempt < 2:
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                    fail_over_to_next_key = True
                     break
 
-                if response.status_code == 429:
-                    raise RuntimeError(
-                        "The Gemini API quota for this key is temporarily exhausted. "
-                        "Try again later or use a paid Gemini API project."
-                    )
+                except requests.RequestException as exc:
+                    last_error = exc
+                    if attempt < 2:
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                    fail_over_to_next_key = True
+                    break
 
-                raise last_error
+            if fail_over_to_next_key:
+                break
 
-            except requests.Timeout as exc:
-                last_error = exc
-                if attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                raise RuntimeError(
-                    "Google took too long to answer. Please click Generate again."
-                ) from exc
+        if fail_over_to_next_key and key_index < len(key_entries) - 1:
+            continue
 
-            except requests.RequestException as exc:
-                last_error = exc
-                if attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                raise RuntimeError(
-                    "ToonScripture could not reach the Gemini API. Please try again."
-                ) from exc
+        if fail_over_to_next_key:
+            break
 
     raise RuntimeError(
-        "Gemini could not generate this step with the available model. "
+        "Gemini could not complete this request with the configured primary project "
+        "or its safe failover projects. "
         f"Last error: {last_error}"
     )
 
