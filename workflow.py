@@ -50,6 +50,10 @@ def _api_key_count():
     return len(_api_keys())
 
 
+def _api_key_names():
+    return [item["name"] for item in _api_keys()]
+
+
 def _extract_json(text):
     text = (text or "").strip()
     text = re.sub(r"^\`\`\`(?:json)?\\s*", "", text, flags=re.I)
