@@ -131,7 +131,127 @@ def _extract_json(text):
         raise
 
 
-def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
+def _openrouter_key():
+    return str(os.getenv("OPENROUTER_API_KEY", "") or "").strip()
+
+
+def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="general"):
+    key = _openrouter_key()
+    if not key:
+        raise RuntimeError("OpenRouter is not connected.")
+
+    import requests
+
+    model = "qwen/qwen3.8-27b:free"
+    response = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://toonscripture.onrender.com",
+            "X-Title": "ToonScripture OS",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": user_prompt + "\n\nReturn valid JSON only.",
+                },
+            ],
+            "temperature": temperature,
+            "response_format": {"type": "json_object"},
+        },
+        timeout=180,
+    )
+
+    record_ai_usage(
+        project_name="OPENROUTER_QWEN_FREE",
+        section_name=section,
+        model_name=model,
+        outcome="success" if response.ok else "error",
+        http_status=response.status_code,
+    )
+
+    if not response.ok:
+        raise RuntimeError(
+            f"Qwen through OpenRouter returned HTTP {response.status_code}: "
+            f"{response.text[:800]}"
+        )
+
+    data = response.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("Qwen returned no generated text.")
+
+    content = choices[0].get("message", {}).get("content", "")
+    if isinstance(content, list):
+        content = "".join(
+            str(part.get("text") or "")
+            for part in content
+            if isinstance(part, dict)
+        )
+
+    text = str(content or "").strip()
+    if not text:
+        raise RuntimeError("Qwen returned an empty response.")
+
+    return _extract_json(text)
+
+
+def _synthesize_gemini_qwen(
+    system_prompt,
+    user_prompt,
+    temperature,
+    section,
+    gemini_output,
+    qwen_output,
+):
+    synthesis_system = """
+You are ToonScripture's senior editorial director.
+You receive two independent JSON candidates for the same production task:
+one from Gemini and one from Qwen.
+
+Create one final superior result.
+
+Rules:
+- Follow the original requested schema exactly.
+- Combine the strongest useful details from both candidates.
+- Resolve disagreements using Scripture, historical plausibility, internal continuity,
+  cinematic clarity, retention, and production usefulness.
+- Prefer grounded, specific details over generic filler.
+- Remove duplication.
+- Do not invent unsupported factual claims.
+- Preserve all important production constraints.
+- Return valid JSON only.
+"""
+
+    synthesis_prompt = f"""
+ORIGINAL SYSTEM INSTRUCTION:
+{system_prompt}
+
+ORIGINAL TASK:
+{user_prompt}
+
+GEMINI CANDIDATE:
+{json.dumps(gemini_output, ensure_ascii=False, indent=2)}
+
+QWEN CANDIDATE:
+{json.dumps(qwen_output, ensure_ascii=False, indent=2)}
+
+Produce the single best final JSON output for section: {section}.
+"""
+
+    return _call_gemini_only(
+        synthesis_system,
+        synthesis_prompt,
+        temperature=min(float(temperature or 0.3), 0.3),
+        section=section,
+    )
+
+
+def _call_gemini_only(system_prompt, user_prompt, temperature=0.3, section="general"):
     key_entries = _api_keys_for(section)
     if not key_entries:
         raise RuntimeError(
@@ -347,6 +467,60 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
     raise RuntimeError(
         "Gemini could not complete this request with the configured project. "
         f"Last error: {last_error}"
+    )
+
+
+def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
+    gemini_output = None
+    qwen_output = None
+    errors = []
+
+    try:
+        gemini_output = _call_gemini_only(
+            system_prompt,
+            user_prompt,
+            temperature=temperature,
+            section=section,
+        )
+    except Exception as exc:
+        errors.append(f"Gemini: {exc}")
+
+    if _openrouter_key():
+        try:
+            qwen_output = _call_qwen_json(
+                system_prompt,
+                user_prompt,
+                temperature=temperature,
+                section=section,
+            )
+        except Exception as exc:
+            errors.append(f"Qwen: {exc}")
+
+    if gemini_output is not None and qwen_output is not None:
+        try:
+            return _synthesize_gemini_qwen(
+                system_prompt,
+                user_prompt,
+                temperature,
+                section,
+                gemini_output,
+                qwen_output,
+            )
+        except Exception as exc:
+            errors.append(f"Synthesis: {exc}")
+            # If synthesis fails, prefer Gemini because research-heavy Gemini
+            # calls can use Google Search grounding in this workflow.
+            return gemini_output
+
+    if gemini_output is not None:
+        return gemini_output
+
+    if qwen_output is not None:
+        return qwen_output
+
+    raise RuntimeError(
+        "Neither Gemini nor Qwen could complete this step. "
+        + " | ".join(errors)
     )
 
 
