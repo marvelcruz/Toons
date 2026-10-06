@@ -238,12 +238,12 @@ with st.sidebar:
                 ("A", "Shape story"),
                 ("B", "Write script"),
                 ("C", "Retention"),
-                ("D", "Visual Bible"),
+                ("D", "Spare"),
                 ("E", "Scenes"),
                 ("F", "YouTube"),
                 ("G", "Audio"),
                 ("H", "Frame review"),
-                ("I", "Spare"),
+                ("I", "Visual Bible"),
             ]
 
             st.markdown("### API usage today")
@@ -291,12 +291,12 @@ with st.sidebar:
                 st.write("**Shape the story** → Project A")
                 st.write("**Write the script** → Project B")
                 st.write("**Viewer retention** → Project C")
-                st.write("**Visual Bible** → Project D")
+                st.write("**Visual Bible** → Project I")
                 st.write("**Scene Production** → Project E")
                 st.write("**YouTube package** → Project F")
                 st.write("**Narration Audio** → Project G")
                 st.write("**Frame review** → Project H")
-                st.write("**Project I** → Reserved spare")
+                st.write("**Project D** → Reserved spare")
         else:
             st.warning(
                 "AI is not configured on the server yet. "
