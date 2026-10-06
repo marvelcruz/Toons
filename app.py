@@ -619,14 +619,25 @@ with nav[2]:
         script = load_json(project, "script_json", {})
         critique = load_json(project, "critique_json", {})
 
+        story_steps = [
+            "1. Shape the story",
+            "2. Write the script",
+            "3. Check viewer retention",
+        ]
+
+        if "story_step" not in st.session_state:
+            if critique:
+                st.session_state.story_step = story_steps[2]
+            elif script:
+                st.session_state.story_step = story_steps[1]
+            else:
+                st.session_state.story_step = story_steps[0]
+
         step = st.radio(
             "Choose what you want to work on",
-            [
-                "1. Shape the story",
-                "2. Write the script",
-                "3. Check viewer retention",
-            ],
+            story_steps,
             horizontal=True,
+            key="story_step",
         )
 
         if step == "1. Shape the story":
@@ -672,6 +683,16 @@ with nav[2]:
                 with st.expander("See all treatment details"):
                     st.json(treatment)
 
+                st.divider()
+                if st.button(
+                    "Next → Write the script",
+                    type="primary",
+                    use_container_width=True,
+                    key="next_to_script",
+                ):
+                    st.session_state.story_step = "2. Write the script"
+                    st.rerun()
+
         elif step == "2. Write the script":
             if not treatment:
                 st.info(
@@ -695,6 +716,17 @@ with nav[2]:
                     st.rerun()
 
                 show_script(script)
+
+                if script:
+                    st.divider()
+                    if st.button(
+                        "Next → Check viewer retention",
+                        type="primary",
+                        use_container_width=True,
+                        key="next_to_retention",
+                    ):
+                        st.session_state.story_step = "3. Check viewer retention"
+                        st.rerun()
 
         else:
             if not script:
@@ -741,6 +773,22 @@ with nav[2]:
                         st.markdown("**Cut or tighten**")
                         for item in critique.get("recommended_cuts", []):
                             st.write("•", item)
+
+                    st.divider()
+                    st.success("Story and script preparation is complete.")
+                    st.caption(
+                        "Next, lock the appearance of characters, locations, groups and props."
+                    )
+                    if st.button(
+                        "Next → Visual Bible",
+                        type="primary",
+                        use_container_width=True,
+                        key="next_to_visual_bible",
+                    ):
+                        st.session_state.next_main_tab = "🎨 Visual Bible"
+                        st.info(
+                            "Visual Bible is the next section. Click the Visual Bible tab above."
+                        )
 
 
 # =========================================================
