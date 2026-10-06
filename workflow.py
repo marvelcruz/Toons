@@ -142,7 +142,7 @@ def _openai_model():
     return model or "gpt-5.6-sol"
 
 
-def _call_openai_json(system_prompt, user_prompt, section):
+def _call_openai_json(system_prompt, user_prompt, section, use_web=False):
     key = _openai_key()
     if not key:
         raise RuntimeError("OpenAI API is not configured.")
@@ -165,6 +165,11 @@ def _call_openai_json(system_prompt, user_prompt, section):
             "model": model,
             "instructions": system_prompt,
             "input": user_prompt + "\n\nReturn valid JSON only.",
+            **(
+                {"tools": [{"type": "web_search"}]}
+                if use_web
+                else {}
+            ),
         },
         timeout=180,
     )
@@ -197,22 +202,7 @@ def _call_openai_json(system_prompt, user_prompt, section):
     return _extract_json(output_text)
 
 
-def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
-    # Scene planning uses OpenAI first because it is a long structured text job
-    # and should not be blocked by a Gemini project quota.
-    if section == "scenes" and _openai_key():
-        try:
-            return _call_openai_json(
-                system_prompt,
-                user_prompt,
-                section,
-            )
-        except Exception as exc:
-            print(
-                f"[ToonScripture] OpenAI scene planning failed; trying Gemini: {exc}",
-                flush=True,
-            )
-
+def _call_gemini_json(system_prompt, user_prompt, temperature=0.3, section="general"):
     key_entries = _api_keys_for(section)
     if not key_entries and not _openai_key():
         raise RuntimeError(
@@ -254,6 +244,9 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
             "responseMimeType": "application/json",
         },
     }
+
+    if section in {"treatment", "visual_bible"}:
+        payload["tools"] = [{"google_search": {}}]
 
     last_error = None
 
@@ -422,24 +415,108 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
         if fail_over_to_next_key:
             break
 
-    # OpenAI is a separate provider, so it is safe to use it when Gemini
-    # cannot complete a text-generation step, including Gemini quota failures.
-    if _openai_key():
-        try:
-            return _call_openai_json(
-                system_prompt,
-                user_prompt,
-                section,
-            )
-        except Exception as openai_error:
-            raise RuntimeError(
-                "Both Gemini and OpenAI could not complete this text step. "
-                f"Gemini: {last_error}. OpenAI: {openai_error}"
-            ) from openai_error
-
     raise RuntimeError(
         "Gemini could not complete this request with the configured project. "
         f"Last error: {last_error}"
+    )
+
+
+def _synthesize_json(
+    system_prompt,
+    user_prompt,
+    section,
+    gemini_output,
+    openai_output,
+):
+    synthesis_system = """
+You are ToonScripture's senior editorial director.
+You are given two independently produced JSON candidates for the same production task:
+one from Gemini and one from OpenAI.
+
+Create one superior final JSON result.
+
+Rules:
+- Preserve the exact schema and intent requested by the original task.
+- Combine the strongest useful details from both candidates.
+- Resolve disagreements using Scripture, historical plausibility, internal story continuity,
+  cinematic clarity, retention, and production usefulness.
+- Do not duplicate ideas merely because both providers mentioned them.
+- Do not invent unsupported factual claims.
+- Keep the output concise enough to be usable in production.
+- Return valid JSON only.
+"""
+
+    synthesis_prompt = f"""
+ORIGINAL TASK:
+{user_prompt}
+
+GEMINI CANDIDATE:
+{json.dumps(gemini_output, indent=2)}
+
+OPENAI CANDIDATE:
+{json.dumps(openai_output, indent=2)}
+
+Produce the best single merged result for section: {section}.
+"""
+
+    if _openai_key():
+        return _call_openai_json(
+            synthesis_system,
+            synthesis_prompt,
+            f"{section}_synthesis",
+            use_web=False,
+        )
+
+    return openai_output or gemini_output
+
+
+def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
+    gemini_output = None
+    openai_output = None
+    errors = []
+
+    try:
+        gemini_output = _call_gemini_json(
+            system_prompt,
+            user_prompt,
+            temperature,
+            section,
+        )
+    except Exception as exc:
+        errors.append(f"Gemini: {exc}")
+
+    if _openai_key():
+        try:
+            openai_output = _call_openai_json(
+                system_prompt,
+                user_prompt,
+                section,
+                use_web=section in {"treatment", "visual_bible"},
+            )
+        except Exception as exc:
+            errors.append(f"OpenAI: {exc}")
+
+    if gemini_output is not None and openai_output is not None:
+        try:
+            return _synthesize_json(
+                system_prompt,
+                user_prompt,
+                section,
+                gemini_output,
+                openai_output,
+            )
+        except Exception as exc:
+            errors.append(f"Synthesis: {exc}")
+            return openai_output
+
+    if openai_output is not None:
+        return openai_output
+
+    if gemini_output is not None:
+        return gemini_output
+
+    raise RuntimeError(
+        "No AI provider completed this step. " + " | ".join(errors)
     )
 
 
