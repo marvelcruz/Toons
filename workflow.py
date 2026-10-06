@@ -94,7 +94,7 @@ def _api_keys_for(section):
             if item["name"] == target
         )
 
-    # Project I is the reserved spare. It is used only when the assigned
+    # Project D is the reserved spare. It is used only when the assigned
     # project is invalid, unavailable, or has a service-side failure.
     # It is never used to bypass a 429 quota response.
     if section != "spare":
