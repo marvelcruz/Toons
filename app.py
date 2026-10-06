@@ -230,6 +230,16 @@ with st.sidebar:
         st.progress(done / total)
         st.caption(f"{done} of {total} preparation stages complete")
         st.caption(f"Next: {next_step(project)}")
+
+        if st.button(
+            "Archive current story",
+            use_container_width=True,
+            key=f"archive_current_story_{project['id']}",
+        ):
+            set_project_status(project["id"], "archived")
+            st.session_state.pop("project_id", None)
+            st.session_state.main_section = "🗃️ Archive"
+            st.rerun()
     else:
         st.caption("No episode yet.")
         st.caption("Create your first episode from Home.")
