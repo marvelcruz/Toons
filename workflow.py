@@ -3,7 +3,7 @@ import os
 import re
 import time
 
-from db import get_project, load_json, save_json
+from db import get_project, load_json, save_json, record_ai_usage
 
 
 def _api_keys():
@@ -201,6 +201,14 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
                         timeout=120,
                     )
 
+                    record_ai_usage(
+                        project_name=key_entry["name"],
+                        section_name=section,
+                        model_name=model,
+                        outcome="success" if response.ok else "error",
+                        http_status=response.status_code,
+                    )
+
                     if response.ok:
                         data = response.json()
                         candidates = data.get("candidates") or []
@@ -295,6 +303,13 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
                     raise last_error
 
                 except requests.Timeout as exc:
+                    record_ai_usage(
+                        project_name=key_entry["name"],
+                        section_name=section,
+                        model_name=model,
+                        outcome="timeout",
+                        http_status=None,
+                    )
                     last_error = exc
                     if attempt < 2:
                         time.sleep(2 * (attempt + 1))
@@ -303,6 +318,13 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
                     break
 
                 except requests.RequestException as exc:
+                    record_ai_usage(
+                        project_name=key_entry["name"],
+                        section_name=section,
+                        model_name=model,
+                        outcome="network_error",
+                        http_status=None,
+                    )
                     last_error = exc
                     if attempt < 2:
                         time.sleep(2 * (attempt + 1))
