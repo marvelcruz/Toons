@@ -128,23 +128,14 @@ def show_script(script):
         return
 
     if script.get("hook"):
-        st.markdown("### Opening hook")
+        st.markdown("## Opening hook")
         st.write(script["hook"])
+        st.divider()
 
     sections = script.get("sections", [])
-    if sections:
-        labels = [
-            section.get("name") or f"Section {i + 1}"
-            for i, section in enumerate(sections)
-        ]
-        selected = st.selectbox(
-            "Choose a script section",
-            labels,
-            key="script_section_selector",
-        )
-        section = sections[labels.index(selected)]
-
-        st.markdown(f"### {selected}")
+    for i, section in enumerate(sections):
+        title = section.get("name") or f"Section {i + 1}"
+        st.markdown(f"## {title}")
 
         if section.get("purpose"):
             st.caption(section["purpose"])
@@ -157,6 +148,12 @@ def show_script(script):
             st.markdown("**Dialogue**")
             for line in dialogue if isinstance(dialogue, list) else [dialogue]:
                 st.write(line)
+
+        st.divider()
+
+    if script.get("closing"):
+        st.markdown("## Closing")
+        st.write(script["closing"])
 
 
 def current_project():
