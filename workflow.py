@@ -142,7 +142,7 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
 
     import requests
 
-    model = "qwen/qwen3.8-27b:free"
+    model = "openrouter/free"
     response = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={
@@ -176,14 +176,14 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
 
     if not response.ok:
         raise RuntimeError(
-            f"Qwen through OpenRouter returned HTTP {response.status_code}: "
+            f"OpenRouter Free Models returned HTTP {response.status_code}: "
             f"{response.text[:800]}"
         )
 
     data = response.json()
     choices = data.get("choices") or []
     if not choices:
-        raise RuntimeError("Qwen returned no generated text.")
+        raise RuntimeError("OpenRouter Free Models returned no generated text.")
 
     content = choices[0].get("message", {}).get("content", "")
     if isinstance(content, list):
@@ -195,7 +195,7 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
 
     text = str(content or "").strip()
     if not text:
-        raise RuntimeError("Qwen returned an empty response.")
+        raise RuntimeError("OpenRouter Free Models returned an empty response.")
 
     return _extract_json(text)
 
@@ -211,7 +211,7 @@ def _synthesize_gemini_qwen(
     synthesis_system = """
 You are ToonScripture's senior editorial director.
 You receive two independent JSON candidates for the same production task:
-one from Gemini and one from Qwen.
+one from Gemini and one from a free OpenRouter model.
 
 Create one final superior result.
 
@@ -237,7 +237,7 @@ ORIGINAL TASK:
 GEMINI CANDIDATE:
 {json.dumps(gemini_output, ensure_ascii=False, indent=2)}
 
-QWEN CANDIDATE:
+OPENROUTER FREE MODEL CANDIDATE:
 {json.dumps(qwen_output, ensure_ascii=False, indent=2)}
 
 Produce the single best final JSON output for section: {section}.
@@ -485,17 +485,17 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
     # cannot prevent the second model from participating.
     if section == "scenes" and has_qwen:
         try:
-            print("[ToonScripture] scenes: calling Qwen via OpenRouter", flush=True)
+            print("[ToonScripture] scenes: calling OpenRouter Free Models", flush=True)
             qwen_output = _call_qwen_json(
                 system_prompt,
                 user_prompt,
                 temperature=temperature,
                 section=section,
             )
-            print("[ToonScripture] scenes: Qwen completed", flush=True)
+            print("[ToonScripture] scenes: OpenRouter Free Models completed", flush=True)
         except Exception as exc:
-            errors.append(f"Qwen: {exc}")
-            print(f"[ToonScripture] scenes: Qwen failed: {exc}", flush=True)
+            errors.append(f"OpenRouter Free Models: {exc}")
+            print(f"[ToonScripture] scenes: OpenRouter Free Models failed: {exc}", flush=True)
 
     try:
         gemini_output = _call_gemini_only(
@@ -510,7 +510,7 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
     if section != "scenes" and has_qwen:
         try:
             print(
-                f"[ToonScripture] {section}: calling Qwen via OpenRouter",
+                f"[ToonScripture] {section}: calling OpenRouter Free Models",
                 flush=True,
             )
             qwen_output = _call_qwen_json(
@@ -520,13 +520,13 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
                 section=section,
             )
             print(
-                f"[ToonScripture] {section}: Qwen completed",
+                f"[ToonScripture] {section}: OpenRouter Free Models completed",
                 flush=True,
             )
         except Exception as exc:
-            errors.append(f"Qwen: {exc}")
+            errors.append(f"OpenRouter Free Models: {exc}")
             print(
-                f"[ToonScripture] {section}: Qwen failed: {exc}",
+                f"[ToonScripture] {section}: OpenRouter Free Models failed: {exc}",
                 flush=True,
             )
 
@@ -556,7 +556,7 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
         )
 
     raise RuntimeError(
-        "Neither Gemini nor Qwen could complete this step. "
+        "Neither Gemini nor OpenRouter Free Models could complete this step. "
         + " | ".join(errors)
     )
 
