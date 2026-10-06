@@ -8,6 +8,8 @@ from db import (
     list_projects,
     get_project,
     create_project,
+    set_project_status,
+    inferred_project_status,
     load_json,
     catalog_summary,
     catalog_progress_summary,
@@ -174,7 +176,10 @@ def show_script(script):
 
 
 def current_project():
-    projects = list_projects()
+    projects = [
+        p for p in list_projects()
+        if (p.get("status") or "") != "archived"
+    ]
     if not projects:
         return None
 
@@ -501,6 +506,7 @@ MAIN_SECTIONS = [
     "🎞️ Scene Production",
     "📺 YouTube",
     "📦 Export",
+    "🗃️ Archive",
 ]
 
 if "main_section" not in st.session_state:
@@ -1848,6 +1854,22 @@ with page_root.container():
             )
 
             st.divider()
+            st.markdown("### Not ready to publish this yet?")
+            st.caption(
+                "Archive this episode to remove it from your active workspace. "
+                "All scripts, scenes, references and exports stay saved."
+            )
+            if st.button(
+                "Archive this story",
+                use_container_width=True,
+                key=f"archive_story_{project['id']}",
+            ):
+                set_project_status(project["id"], "archived")
+                st.session_state.pop("project_id", None)
+                st.session_state.main_section = "🗃️ Archive"
+                st.rerun()
+
+            st.divider()
             st.markdown("### Ready for the next story?")
             st.caption(
                 "Start another Bible story without leaving the workflow."
@@ -1859,4 +1881,54 @@ with page_root.container():
                 key=f"start_next_story_{project['id']}",
             ):
                 start_new_episode_dialog()
+
+    # =========================================================
+    # ARCHIVE
+    # =========================================================
+
+    if main_section == "🗃️ Archive":
+        st.header("Story Archive")
+        st.write(
+            "Park episodes here when you are not ready to publish or continue them yet. "
+            "Nothing is deleted."
+        )
+
+        archived_projects = [
+            p for p in list_projects()
+            if (p.get("status") or "") == "archived"
+        ]
+
+        if not archived_projects:
+            st.info("No archived stories yet.")
+        else:
+            st.caption(f"{len(archived_projects)} archived stories")
+
+            for archived in archived_projects:
+                st.markdown(f"### {archived['story_name']}")
+                st.caption(
+                    f"{archived.get('bible_reference') or 'Bible reference not set'} · "
+                    f"{archived.get('target_minutes', 0)} min"
+                )
+
+                done, total = project_progress(archived)
+                st.progress(
+                    done / total if total else 0,
+                    text=f"{done} of {total} preparation stages complete",
+                )
+
+                if st.button(
+                    "Restore to active workspace",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"restore_archived_{archived['id']}",
+                ):
+                    set_project_status(
+                        archived["id"],
+                        inferred_project_status(archived),
+                    )
+                    st.session_state.project_id = archived["id"]
+                    st.session_state.main_section = "🏠 Home"
+                    st.rerun()
+
+                st.divider()
 
