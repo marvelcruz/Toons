@@ -3,7 +3,7 @@ import os
 import re
 import time
 
-from db import get_project, load_json, save_json, record_ai_usage
+from db import get_project, load_json, save_json, record_ai_usage, list_project_assets
 
 
 def _api_keys():
@@ -490,6 +490,21 @@ def plan_scenes(project_id):
         segments.append(("Closing", script["closing"]))
 
     target_seconds = int(round(float(p["target_minutes"]) * 60))
+    timing_source = "episode target"
+
+    saved_audio = list_project_assets(project_id, "narration_audio")
+    if saved_audio:
+        metadata = saved_audio[0].get("metadata_json") or {}
+        audio_seconds = metadata.get("duration_seconds")
+        try:
+            audio_seconds = int(round(float(audio_seconds)))
+        except Exception:
+            audio_seconds = 0
+
+        if audio_seconds > 0:
+            target_seconds = audio_seconds
+            timing_source = "narration audio"
+
     total_words = max(1, sum(len(text.split()) for _, text in segments))
     all_scenes = []
     next_number = 1
@@ -534,11 +549,12 @@ Choose shorter clips for fast action and longer clips for reflective or establis
 
     out = {
         "target_runtime_seconds": target_seconds,
+        "timing_source": timing_source,
+        "allowed_clip_lengths": [4, 5, 8, 10],
         "planned_runtime_seconds": sum(
             int(scene.get("duration_seconds") or 0)
             for scene in all_scenes
         ),
-        "allowed_clip_lengths": [4, 5, 8, 10],
         "scenes": all_scenes,
     }
     save_json(project_id, "scenes_json", out, "scenes_ready")
