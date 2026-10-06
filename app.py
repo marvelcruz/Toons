@@ -688,8 +688,34 @@ if main_section == "✍️ Story & Script":
                     for beat in treatment["story_beats"]:
                         st.write("•", beat)
 
-                with st.expander("See all treatment details"):
-                    st.json(treatment)
+                with st.expander("See full treatment"):
+                    if treatment.get("core_story"):
+                        st.markdown("### Core story")
+                        st.write(treatment["core_story"])
+
+                    if treatment.get("scriptural_anchor"):
+                        st.markdown("### Scriptural anchors")
+                        for item in treatment["scriptural_anchor"]:
+                            st.write("•", item)
+
+                    if treatment.get("historical_context"):
+                        st.markdown("### Historical context")
+                        for item in treatment["historical_context"]:
+                            st.write("•", item)
+
+                    if treatment.get("cinematic_interpretations"):
+                        st.markdown("### Cinematic interpretation")
+                        for item in treatment["cinematic_interpretations"]:
+                            st.write("•", item)
+
+                    if treatment.get("accuracy_risks"):
+                        st.markdown("### Accuracy notes")
+                        for item in treatment["accuracy_risks"]:
+                            st.write("•", item)
+
+                    if treatment.get("ending_payoff"):
+                        st.markdown("### Ending payoff")
+                        st.write(treatment["ending_payoff"])
 
                 st.divider()
                 if st.button(
