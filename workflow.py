@@ -157,7 +157,7 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
         "gemini-3.5-flash-lite",
     ]:
         model = str(model or "").strip()
-        if model and model not in models:
+        if model and model.startswith("gemini-") and model not in models:
             models.append(model)
 
     payload = {
