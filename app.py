@@ -96,6 +96,14 @@ def next_step(project):
     return "This episode is fully prepared for production and publishing."
 
 
+def go_to_story_step(value):
+    st.session_state["story_step"] = value
+
+
+def go_to_main_section(value):
+    st.session_state["main_section"] = value
+
+
 def render_project_card(project):
     if not project:
         st.info("No episode selected yet.")
@@ -718,14 +726,14 @@ if main_section == "✍️ Story & Script":
                         st.write(treatment["ending_payoff"])
 
                 st.divider()
-                if st.button(
+                st.button(
                     "Next → Write the script",
                     type="primary",
                     use_container_width=True,
                     key="next_to_script",
-                ):
-                    st.session_state.story_step = "2. Write the script"
-                    st.rerun()
+                    on_click=go_to_story_step,
+                    args=("2. Write the script",),
+                )
 
         elif step == "2. Write the script":
             if not treatment:
@@ -753,14 +761,14 @@ if main_section == "✍️ Story & Script":
 
                 if script:
                     st.divider()
-                    if st.button(
+                    st.button(
                         "Next → Check viewer retention",
                         type="primary",
                         use_container_width=True,
                         key="next_to_retention",
-                    ):
-                        st.session_state.story_step = "3. Check viewer retention"
-                        st.rerun()
+                        on_click=go_to_story_step,
+                        args=("3. Check viewer retention",),
+                    )
 
         else:
             if not script:
@@ -813,14 +821,14 @@ if main_section == "✍️ Story & Script":
                     st.caption(
                         "Next, lock the appearance of characters, locations, groups and props."
                     )
-                    if st.button(
+                    st.button(
                         "Next → Visual Bible",
                         type="primary",
                         use_container_width=True,
                         key="next_to_visual_bible",
-                    ):
-                        st.session_state.main_section = "🎨 Visual Bible"
-                        st.rerun()
+                        on_click=go_to_main_section,
+                        args=("🎨 Visual Bible",),
+                    )
 
 
 # =========================================================
@@ -1003,14 +1011,14 @@ if main_section == "🎨 Visual Bible":
 
         if bible:
             st.divider()
-            if st.button(
+            st.button(
                 "Next → Scene Production",
                 type="primary",
                 use_container_width=True,
                 key="next_to_scene_production",
-            ):
-                st.session_state.main_section = "🎞️ Scene Production"
-                st.rerun()
+                on_click=go_to_main_section,
+                args=("🎞️ Scene Production",),
+            )
 
 
 # =========================================================
@@ -1207,14 +1215,14 @@ if main_section == "🎞️ Scene Production":
 
         if scenes:
             st.divider()
-            if st.button(
+            st.button(
                 "Next → Audio",
                 type="primary",
                 use_container_width=True,
                 key="next_to_audio",
-            ):
-                st.session_state.main_section = "🎙️ Audio"
-                st.rerun()
+                on_click=go_to_main_section,
+                args=("🎙️ Audio",),
+            )
 
 
 # =========================================================
@@ -1349,14 +1357,14 @@ if main_section == "🎙️ Audio":
 
             if saved_audio_files or latest_audio:
                 st.divider()
-                if st.button(
+                st.button(
                     "Next → YouTube",
                     type="primary",
                     use_container_width=True,
                     key="next_to_youtube",
-                ):
-                    st.session_state.main_section = "📺 YouTube"
-                    st.rerun()
+                    on_click=go_to_main_section,
+                    args=("📺 YouTube",),
+                )
 
 
 # =========================================================
@@ -1519,14 +1527,14 @@ if main_section == "📺 YouTube":
 
         if package:
             st.divider()
-            if st.button(
+            st.button(
                 "Next → Export",
                 type="primary",
                 use_container_width=True,
                 key="next_to_export",
-            ):
-                st.session_state.main_section = "📦 Export"
-                st.rerun()
+                on_click=go_to_main_section,
+                args=("📦 Export",),
+            )
 
 
 # =========================================================
