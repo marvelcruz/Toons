@@ -60,9 +60,27 @@ def call_json(system_prompt, user_prompt, temperature=0.3):
     from google.genai import types
 
     client = genai.Client(api_key=key)
+
     preferred = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+    preferred = str(preferred or "").strip().strip('"').strip("'")
+    if preferred.startswith("GEMINI_MODEL="):
+        preferred = preferred.split("=", 1)[1].strip()
+    if preferred.startswith("models/"):
+        preferred = preferred.split("/", 1)[1].strip()
+
+    # Keep a short list of current, valid Gemini model IDs.
+    # If a deployment variable is mistyped, ToonScripture automatically tries
+    # the next valid model instead of crashing the whole episode workflow.
     models = []
-    for m in [preferred, "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]:
+    for m in [
+        preferred,
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+    ]:
+        m = str(m or "").strip()
         if m and m not in models:
             models.append(m)
 
@@ -83,13 +101,35 @@ def call_json(system_prompt, user_prompt, temperature=0.3):
             except Exception as exc:
                 last_error = exc
                 msg = str(exc)
+
                 if "503" in msg and attempt < 2:
                     time.sleep(2 * (attempt + 1))
                     continue
-                if "429" in msg or "404" in msg or "503" in msg:
+
+                # Model-name / availability problems should fall through to the
+                # next known-good model, not surface as a technical crash.
+                if (
+                    "unexpected model name format" in msg.lower()
+                    or "model not found" in msg.lower()
+                    or "404" in msg
+                    or "503" in msg
+                ):
                     break
-                raise
-    raise RuntimeError(f"Gemini generation failed: {last_error}")
+
+                # Quota is account/key-specific, so trying another model may
+                # still succeed without changing the user's project.
+                if "429" in msg:
+                    break
+
+                raise RuntimeError(
+                    "The AI request could not be completed. "
+                    "ToonScripture tried the configured Gemini model but Google rejected the request."
+                ) from exc
+
+    raise RuntimeError(
+        "Gemini generation failed after trying the available models. "
+        f"Last error: {last_error}"
+    )
 
 
 TREATMENT_SYSTEM = """
