@@ -731,24 +731,6 @@ def plan_scenes(project_id):
     script = load_json(p, "script_json", {})
     bible = load_json(p, "character_bible_json", {})
 
-    segments = []
-    if script.get("hook"):
-        segments.append(("Opening hook", script["hook"]))
-    for section in script.get("sections", []):
-        text = section.get("narration") or ""
-        dialogue = section.get("dialogue") or []
-        if isinstance(dialogue, list):
-            dialogue_text = " ".join(
-                line if isinstance(line, str)
-                else str(line.get("text") or line.get("line") or line.get("dialogue") or "")
-                for line in dialogue
-            )
-            text = (text + " " + dialogue_text).strip()
-        if text:
-            segments.append((section.get("name") or "Story section", text))
-    if script.get("closing"):
-        segments.append(("Closing", script["closing"]))
-
     target_seconds = int(round(float(p["target_minutes"]) * 60))
     timing_source = "episode target"
 
@@ -765,59 +747,98 @@ def plan_scenes(project_id):
             target_seconds = audio_seconds
             timing_source = "narration audio"
 
-    total_words = max(1, sum(len(text.split()) for _, text in segments))
-    all_scenes = []
-    next_number = 1
+    narration_parts = []
+    if script.get("hook"):
+        narration_parts.append(("Opening hook", script["hook"]))
 
-    for index, (segment_name, segment_text) in enumerate(segments):
-        words = max(1, len(segment_text.split()))
-        if index == len(segments) - 1:
-            used = sum(int(s.get("duration_seconds") or 0) for s in all_scenes)
-            segment_seconds = max(4, target_seconds - used)
-        else:
-            segment_seconds = max(4, round(target_seconds * words / total_words))
+    for section in script.get("sections", []):
+        text = section.get("narration") or ""
+        dialogue = section.get("dialogue") or []
+        if isinstance(dialogue, list):
+            dialogue_text = " ".join(
+                line if isinstance(line, str)
+                else str(
+                    line.get("text")
+                    or line.get("line")
+                    or line.get("dialogue")
+                    or ""
+                )
+                for line in dialogue
+            )
+            text = (text + " " + dialogue_text).strip()
 
-        scene_count = max(1, round(segment_seconds / 8))
-        prompt = f"""
+        if text:
+            narration_parts.append(
+                (section.get("name") or "Story section", text)
+            )
+
+    if script.get("closing"):
+        narration_parts.append(("Closing", script["closing"]))
+
+    # One AI request for the entire episode. The previous per-section approach
+    # caused 8-12 long network calls and made Streamlit appear frozen.
+    scene_count = max(1, round(target_seconds / 8))
+
+    full_narration = "\n\n".join(
+        f"{name}:\n{text}"
+        for name, text in narration_parts
+    )
+
+    prompt = f"""
 STORY: {p['story_name']}
-FULL EPISODE TARGET: {target_seconds} seconds
-SEGMENT: {segment_name}
-SEGMENT NARRATION:
-{segment_text}
+FULL EPISODE RUNTIME: {target_seconds} seconds
+TIMING SOURCE: {timing_source}
+
+FULL APPROVED NARRATION, IN ORDER:
+{full_narration}
 
 CHARACTER/WORLD BIBLE:
 {json.dumps(bible, indent=2)}
 
-Create EXACTLY {scene_count} clips for this segment.
-Use ONLY 4, 5, 8, or 10 seconds for duration_seconds.
-Keep the narration in order and visually cover every part of this segment.
-Choose shorter clips for fast action and longer clips for reflective or establishing beats.
-"""
-        part = call_json(SCENE_SYSTEM, prompt, 0.2, section="scenes")
-        scenes = part.get("scenes", [])
+Create EXACTLY {scene_count} Flow-ready clips for the WHOLE EPISODE in narration order.
 
-        for scene in scenes:
-            duration = int(scene.get("duration_seconds") or 8)
-            scene["duration_seconds"] = min(
-                (4, 5, 8, 10),
-                key=lambda value: abs(value - duration),
-            )
-            scene["scene_number"] = next_number
-            scene.setdefault("production_status", "not_started")
-            all_scenes.append(scene)
-            next_number += 1
+Important:
+- Every part of the narration must be visually covered.
+- duration_seconds may ONLY be 4, 5, 8, or 10.
+- Use start_state -> dominant_action -> end_state for every clip.
+- Keep recurring characters, costumes, locations and props consistent with the Visual Bible.
+- Use shorter clips for fast action and longer clips for reflective or establishing beats.
+- Do not merge distant story moments into one clip.
+- Return one JSON object with a single scenes array.
+"""
+
+    out = call_json(
+        SCENE_SYSTEM,
+        prompt,
+        0.2,
+        section="scenes",
+    )
+
+    scenes = out.get("scenes", []) or []
+    if not scenes:
+        raise RuntimeError("The scene planner returned no scenes.")
+
+    # Normalize numbering and Flow-supported lengths.
+    for index, scene in enumerate(scenes, start=1):
+        duration = int(scene.get("duration_seconds") or 8)
+        scene["duration_seconds"] = min(
+            (4, 5, 8, 10),
+            key=lambda value: abs(value - duration),
+        )
+        scene["scene_number"] = index
+        scene.setdefault("production_status", "not_started")
 
     fitted_durations = _fit_flow_durations(
-        [scene.get("duration_seconds") or 8 for scene in all_scenes],
+        [scene.get("duration_seconds") or 8 for scene in scenes],
         target_seconds,
     )
 
-    for scene, duration in zip(all_scenes, fitted_durations):
+    for scene, duration in zip(scenes, fitted_durations):
         scene["duration_seconds"] = duration
 
     planned_seconds = sum(
         int(scene.get("duration_seconds") or 0)
-        for scene in all_scenes
+        for scene in scenes
     )
 
     out = {
@@ -826,11 +847,11 @@ Choose shorter clips for fast action and longer clips for reflective or establis
         "allowed_clip_lengths": [4, 5, 8, 10],
         "planned_runtime_seconds": planned_seconds,
         "runtime_difference_seconds": planned_seconds - target_seconds,
-        "scenes": all_scenes,
+        "scenes": scenes,
     }
+
     save_json(project_id, "scenes_json", out, "scenes_ready")
     return out
-
 
 def make_package(project_id):
     p = get_project(project_id)
