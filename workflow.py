@@ -242,7 +242,11 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
                         if attempt < 2:
                             time.sleep(2 * (attempt + 1))
                             continue
-                        fail_over_to_next_key = True
+                        print(
+                            f"[ToonScripture] {section}: {model} is overloaded on "
+                            f"{key_entry['name']}; trying the next model.",
+                            flush=True,
+                        )
                         break
 
                     if status == 400:
@@ -281,7 +285,11 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
                         if attempt < 2:
                             time.sleep(2 * (attempt + 1))
                             continue
-                        fail_over_to_next_key = True
+                        print(
+                            f"[ToonScripture] {section}: {model} returned HTTP {status} on "
+                            f"{key_entry['name']}; trying the next model.",
+                            flush=True,
+                        )
                         break
 
                     raise last_error
