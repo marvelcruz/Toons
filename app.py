@@ -234,17 +234,25 @@ st.caption(
     "A simple workspace for turning a Bible story into a cinematic YouTube episode."
 )
 
-nav = st.tabs(
-    [
-        "🏠 Home",
-        "📋 Story Checklist",
-        "✍️ Story & Script",
-        "🎨 Visual Bible",
-        "🎞️ Scene Production",
-        "🎙️ Audio",
-        "📺 YouTube",
-        "📦 Export",
-    ]
+MAIN_SECTIONS = [
+    "🏠 Home",
+    "📋 Story Checklist",
+    "✍️ Story & Script",
+    "🎨 Visual Bible",
+    "🎞️ Scene Production",
+    "🎙️ Audio",
+    "📺 YouTube",
+    "📦 Export",
+]
+
+if "main_section" not in st.session_state:
+    st.session_state.main_section = "🏠 Home"
+
+main_section = st.segmented_control(
+    "Workspace section",
+    MAIN_SECTIONS,
+    key="main_section",
+    label_visibility="collapsed",
 )
 
 
@@ -252,7 +260,7 @@ nav = st.tabs(
 # HOME
 # =========================================================
 
-with nav[0]:
+if main_section == "🏠 Home":
     st.header("What would you like to do?")
 
     st.markdown("### How it works")
@@ -501,7 +509,7 @@ project = (
 # STORY CHECKLIST
 # =========================================================
 
-with nav[1]:
+if main_section == "📋 Story Checklist":
     st.header("Story Checklist")
     st.write(
         "This is your master production list. Every story in your ToonScripture catalogue "
@@ -606,7 +614,7 @@ with nav[1]:
 # STORY & SCRIPT
 # =========================================================
 
-with nav[2]:
+if main_section == "✍️ Story & Script":
     if not project:
         st.info("Create or choose an episode from Home first.")
     else:
@@ -785,17 +793,15 @@ with nav[2]:
                         use_container_width=True,
                         key="next_to_visual_bible",
                     ):
-                        st.session_state.next_main_tab = "🎨 Visual Bible"
-                        st.info(
-                            "Visual Bible is the next section. Click the Visual Bible tab above."
-                        )
+                        st.session_state.main_section = "🎨 Visual Bible"
+                        st.rerun()
 
 
 # =========================================================
 # VISUAL BIBLE
 # =========================================================
 
-with nav[3]:
+if main_section == "🎨 Visual Bible":
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("script_json"):
@@ -969,12 +975,23 @@ with nav[3]:
                 with st.expander("See all visual details"):
                     st.json(item)
 
+        if bible:
+            st.divider()
+            if st.button(
+                "Next → Scene Production",
+                type="primary",
+                use_container_width=True,
+                key="next_to_scene_production",
+            ):
+                st.session_state.main_section = "🎞️ Scene Production"
+                st.rerun()
+
 
 # =========================================================
 # SCENE PRODUCTION
 # =========================================================
 
-with nav[4]:
+if main_section == "🎞️ Scene Production":
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("character_bible_json"):
@@ -1162,12 +1179,23 @@ with nav[4]:
                         wrap_lines=True,
                     )
 
+        if scenes:
+            st.divider()
+            if st.button(
+                "Next → Audio",
+                type="primary",
+                use_container_width=True,
+                key="next_to_audio",
+            ):
+                st.session_state.main_section = "🎙️ Audio"
+                st.rerun()
+
 
 # =========================================================
 # AUDIO
 # =========================================================
 
-with nav[5]:
+if main_section == "🎙️ Audio":
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("script_json"):
@@ -1293,12 +1321,23 @@ with nav[5]:
                     st.markdown("### Latest saved narration")
                     st.audio(url)
 
+            if saved_audio_files or latest_audio:
+                st.divider()
+                if st.button(
+                    "Next → YouTube",
+                    type="primary",
+                    use_container_width=True,
+                    key="next_to_youtube",
+                ):
+                    st.session_state.main_section = "📺 YouTube"
+                    st.rerun()
+
 
 # =========================================================
 # YOUTUBE
 # =========================================================
 
-with nav[6]:
+if main_section == "📺 YouTube":
     if not project:
         st.info("Choose an episode first.")
     elif not project.get("script_json"):
@@ -1452,12 +1491,23 @@ with nav[6]:
                 f"{latest_metrics.get('average_percentage_viewed') or 0:.1f}%",
             )
 
+        if package:
+            st.divider()
+            if st.button(
+                "Next → Export",
+                type="primary",
+                use_container_width=True,
+                key="next_to_export",
+            ):
+                st.session_state.main_section = "📦 Export"
+                st.rerun()
+
 
 # =========================================================
 # EXPORT
 # =========================================================
 
-with nav[7]:
+if main_section == "📦 Export":
     if not project:
         st.info("Choose an episode first.")
     else:
