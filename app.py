@@ -36,6 +36,7 @@ from workflow import (
     make_package,
     _api_key,
     _api_key_count,
+    _openrouter_key,
     narration_text,
     list_tts_voices,
     generate_tts_bytes,
@@ -242,6 +243,15 @@ with st.sidebar:
                 f"{count} configured Gemini project"
                 + ("s" if count != 1 else "")
             )
+
+            if _openrouter_key():
+                st.success("Qwen via OpenRouter is connected", icon="✅")
+                st.caption("Free Qwen model is available as the second AI reviewer.")
+            else:
+                st.error("Qwen via OpenRouter is NOT connected")
+                st.caption(
+                    "Render is not detecting OPENROUTER_API_KEY in the running service."
+                )
 
             usage_rows = {
                 row["project_name"]: row
