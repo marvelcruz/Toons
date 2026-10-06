@@ -41,7 +41,9 @@ def _api_keys():
     try:
         import streamlit as st
         selected = str(
-            st.session_state.get("gemini_primary_name", "") or ""
+            st.session_state.get("gemini_primary_name", "")
+            or os.getenv("GEMINI_PRIMARY_NAME", "")
+            or ""
         ).strip()
 
         if selected:
