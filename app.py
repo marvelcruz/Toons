@@ -603,7 +603,7 @@ with page_root.container():
     # STORY CHECKLIST
     # =========================================================
 
-    elif main_section == "📋 Story Checklist":
+    if main_section == "📋 Story Checklist":
         st.header("Story Checklist")
         st.write(
             "This is your master production list. Every story in your ToonScripture catalogue "
@@ -708,7 +708,7 @@ with page_root.container():
     # STORY & SCRIPT
     # =========================================================
 
-    elif main_section == "✍️ Story & Script":
+    if main_section == "✍️ Story & Script":
         if not project:
             st.info("Create or choose an episode from Home first.")
         else:
@@ -972,7 +972,7 @@ with page_root.container():
     # VISUAL BIBLE
     # =========================================================
 
-    elif main_section == "🎨 Visual Bible":
+    if main_section == "🎨 Visual Bible":
         if not project:
             st.info("Choose an episode first.")
         elif not project.get("script_json"):
@@ -1264,7 +1264,7 @@ with page_root.container():
     # SCENE PRODUCTION
     # =========================================================
 
-    elif main_section == "🎞️ Scene Production":
+    if main_section == "🎞️ Scene Production":
         if not project:
             st.info("Choose an episode first.")
         elif not project.get("character_bible_json"):
@@ -1438,7 +1438,7 @@ with page_root.container():
     # AUDIO
     # =========================================================
 
-    elif main_section == "🎙️ Audio":
+    if main_section == "🎙️ Audio":
         if not project:
             st.info("Choose an episode first.")
         elif not project.get("script_json"):
@@ -1586,7 +1586,7 @@ with page_root.container():
     # YOUTUBE
     # =========================================================
 
-    elif main_section == "📺 YouTube":
+    if main_section == "📺 YouTube":
         if not project:
             st.info("Choose an episode first.")
         elif not project.get("script_json"):
@@ -1756,7 +1756,7 @@ with page_root.container():
     # EXPORT
     # =========================================================
 
-    elif main_section == "📦 Export":
+    if main_section == "📦 Export":
         if not project:
             st.info("Choose an episode first.")
         else:
