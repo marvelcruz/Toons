@@ -643,9 +643,17 @@ with nav[2]:
                 type="primary",
                 use_container_width=True,
             ):
-                with st.spinner("Shaping the story..."):
-                    develop_treatment(project["id"])
-                st.rerun()
+                try:
+                    with st.spinner("Shaping the story..."):
+                        develop_treatment(project["id"])
+                    st.rerun()
+                except Exception as exc:
+                    st.error(
+                        "The AI could not create the treatment yet. "
+                        "I have kept your episode saved, so nothing was lost."
+                    )
+                    with st.expander("Technical details"):
+                        st.code(str(exc))
 
             if treatment:
                 if treatment.get("opening_hook"):
