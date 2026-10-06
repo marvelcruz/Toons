@@ -131,11 +131,92 @@ def _extract_json(text):
         raise
 
 
-def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
-    key_entries = _api_keys_for(section)
-    if not key_entries:
+def _openai_key():
+    return str(os.getenv("LLM_API_KEY", "") or "").strip()
+
+
+def _openai_model():
+    model = str(os.getenv("LLM_MODEL", "gpt-5.6-sol") or "").strip()
+    if model == "gpt-5.6":
+        model = "gpt-5.6-sol"
+    return model or "gpt-5.6-sol"
+
+
+def _call_openai_json(system_prompt, user_prompt, section):
+    key = _openai_key()
+    if not key:
+        raise RuntimeError("OpenAI API is not configured.")
+
+    import requests
+
+    base_url = str(
+        os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+        or "https://api.openai.com/v1"
+    ).rstrip("/")
+    model = _openai_model()
+
+    response = requests.post(
+        f"{base_url}/responses",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "instructions": system_prompt,
+            "input": user_prompt + "\n\nReturn valid JSON only.",
+        },
+        timeout=180,
+    )
+
+    record_ai_usage(
+        project_name="OPENAI_API",
+        section_name=section,
+        model_name=model,
+        outcome="success" if response.ok else "error",
+        http_status=response.status_code,
+    )
+
+    if not response.ok:
         raise RuntimeError(
-            "Gemini is not connected yet. Add the Gemini API keys in the deployment secrets."
+            f"OpenAI returned HTTP {response.status_code}: {response.text[:800]}"
+        )
+
+    data = response.json()
+    text_parts = []
+
+    for item in data.get("output", []) or []:
+        for part in item.get("content", []) or []:
+            if part.get("type") == "output_text" and part.get("text"):
+                text_parts.append(part["text"])
+
+    output_text = "\n".join(text_parts).strip()
+    if not output_text:
+        raise RuntimeError("OpenAI returned an empty response.")
+
+    return _extract_json(output_text)
+
+
+def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
+    # Scene planning uses OpenAI first because it is a long structured text job
+    # and should not be blocked by a Gemini project quota.
+    if section == "scenes" and _openai_key():
+        try:
+            return _call_openai_json(
+                system_prompt,
+                user_prompt,
+                section,
+            )
+        except Exception as exc:
+            print(
+                f"[ToonScripture] OpenAI scene planning failed; trying Gemini: {exc}",
+                flush=True,
+            )
+
+    key_entries = _api_keys_for(section)
+    if not key_entries and not _openai_key():
+        raise RuntimeError(
+            "No text AI provider is configured. Add Gemini or OpenAI API credentials."
         )
 
     import requests
@@ -341,9 +422,23 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
         if fail_over_to_next_key:
             break
 
+    # OpenAI is a separate provider, so it is safe to use it when Gemini
+    # cannot complete a text-generation step, including Gemini quota failures.
+    if _openai_key():
+        try:
+            return _call_openai_json(
+                system_prompt,
+                user_prompt,
+                section,
+            )
+        except Exception as openai_error:
+            raise RuntimeError(
+                "Both Gemini and OpenAI could not complete this text step. "
+                f"Gemini: {last_error}. OpenAI: {openai_error}"
+            ) from openai_error
+
     raise RuntimeError(
-        "Gemini could not complete this request with the configured primary project "
-        "or its safe failover projects. "
+        "Gemini could not complete this request with the configured project. "
         f"Last error: {last_error}"
     )
 
