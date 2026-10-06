@@ -750,6 +750,8 @@ if main_section == "✍️ Story & Script":
                     "The script is written for cinematic narration and viewer retention."
                 )
 
+                script_error = None
+
                 if st.button(
                     "Write the script"
                     if not script
@@ -757,9 +759,28 @@ if main_section == "✍️ Story & Script":
                     type="primary",
                     use_container_width=True,
                 ):
-                    with st.spinner("Writing the episode..."):
-                        draft_script(project["id"])
-                    st.rerun()
+                    try:
+                        with st.spinner("Writing the episode..."):
+                            draft_script(project["id"])
+                        st.rerun()
+                    except Exception as exc:
+                        script_error = str(exc)
+
+                if script_error:
+                    if "quota" in script_error.lower() or "429" in script_error:
+                        st.warning(
+                            "The primary Gemini project has reached its current API limit. "
+                            "Your existing script is still saved and has not been replaced. "
+                            "You can keep working with it and retry the rewrite later."
+                        )
+                    else:
+                        st.error(
+                            "The script could not be generated right now. "
+                            "Your existing work is still saved."
+                        )
+
+                    with st.expander("Technical details"):
+                        st.code(script_error)
 
                 show_script(script)
 
