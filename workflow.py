@@ -3,7 +3,14 @@ import os
 import re
 import time
 
-from db import get_project, load_json, save_json, record_ai_usage, list_project_assets
+from db import (
+    get_project,
+    load_json,
+    save_json,
+    record_ai_usage,
+    list_project_assets,
+    channel_performance_learning,
+)
 
 
 def _api_keys():
@@ -856,6 +863,7 @@ def develop_treatment(project_id):
     p = get_project(project_id)
     target_minutes = float(p['target_minutes'])
     target_seconds = int(round(target_minutes * 60))
+    channel_learning = channel_performance_learning()
 
     # Scale story density with runtime instead of forcing every episode into
     # the same number of beats.
@@ -866,6 +874,16 @@ STORY: {p['story_name']}
 BIBLE REFERENCE: {p['bible_reference']}
 TARGET RUNTIME: {target_minutes:g} minutes ({target_seconds} seconds)
 TARGET STORY BEATS: approximately {target_beats}, adjusted naturally for the material
+
+CHANNEL PERFORMANCE LEARNING:
+{json.dumps(channel_learning, indent=2)}
+
+Use channel learning carefully:
+- Treat it as evidence, not a rigid formula.
+- If confidence is "early", do not generalize strongly from one or two videos.
+- If confidence is "emerging", use patterns as hypotheses.
+- If confidence is "useful" or "strong", deliberately preserve what repeatedly works and avoid repeated failure patterns.
+- Never sacrifice scriptural accuracy or story logic just to mimic a past video's metrics.
 
 Design the treatment so the full episode sustains attention at THIS runtime without filler.
 
@@ -913,6 +931,7 @@ def draft_script(project_id):
     p = get_project(project_id)
     treatment = load_json(p, "treatment_json", {})
     target_minutes = float(p['target_minutes'])
+    channel_learning = channel_performance_learning()
 
     # Spoken narration varies naturally by dramatic intensity. Use a flexible
     # range instead of pretending every minute should contain the same number
@@ -930,6 +949,11 @@ EXPECTED MAJOR SECTIONS: approximately {section_target}, adjusted naturally for 
 
 APPROVED TREATMENT:
 {json.dumps(treatment, indent=2)}
+
+CHANNEL PERFORMANCE LEARNING:
+{json.dumps(channel_learning, indent=2)}
+
+Apply channel learning only when the data actually supports it. Do not overfit a single video's result.
 
 FIRST-VISIBLE-DRAFT QUALITY GATE:
 This draft should be capable of scoring 95+ under the strict retention rubric without relying on
