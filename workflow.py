@@ -733,13 +733,17 @@ def _call_gemini_only(system_prompt, user_prompt, temperature=0.3, section="gene
 
 
 def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
-    # Claude is an optional creative specialist. The default "auto" mode uses
-    # it only for writing/retention work when ANTHROPIC_API_KEY is available.
-    # With no Claude key, ToonScripture keeps its existing Gemini + OpenRouter
-    # behavior unchanged.
-    if section in {"script", "retention"}:
+    # Creative work prefers the existing OpenRouter free-model pool first.
+    # Gemini remains the reliable fallback. Claude is optional and only used
+    # when explicitly selected/configured.
+    creative_sections = {"script", "retention"}
+    has_qwen = bool(_openrouter_key())
+    errors = []
+
+    if section in creative_sections:
         provider = _creative_provider()
-        if provider in {"auto", "claude"} and _anthropic_key():
+
+        if provider == "claude" and _anthropic_key():
             try:
                 return _call_claude_json(
                     system_prompt,
@@ -748,27 +752,67 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
                     section=section,
                 )
             except Exception as exc:
+                errors.append(f"Claude: {exc}")
                 print(
                     f"[ToonScripture] {section}: Claude failed, falling back: {exc}",
                     flush=True,
                 )
-                if provider == "claude":
-                    # Explicit Claude mode still falls back so a temporary
-                    # Anthropic outage never blocks production.
-                    pass
+
+        if has_qwen:
+            try:
+                print(
+                    f"[ToonScripture] {section}: trying OpenRouter Free Models first",
+                    flush=True,
+                )
+                return _call_qwen_json(
+                    system_prompt,
+                    user_prompt,
+                    temperature=temperature,
+                    section=section,
+                )
+            except Exception as exc:
+                errors.append(f"OpenRouter Free Models: {exc}")
+                print(
+                    f"[ToonScripture] {section}: OpenRouter Free Models failed, falling back to Gemini: {exc}",
+                    flush=True,
+                )
+
+        try:
+            return _call_gemini_only(
+                system_prompt,
+                user_prompt,
+                temperature=temperature,
+                section=section,
+            )
+        except Exception as exc:
+            errors.append(f"Gemini: {exc}")
+
+        if provider == "auto" and _anthropic_key():
+            try:
+                return _call_claude_json(
+                    system_prompt,
+                    user_prompt,
+                    temperature=temperature,
+                    section=section,
+                )
+            except Exception as exc:
+                errors.append(f"Claude fallback: {exc}")
+
+        raise RuntimeError(
+            "No creative AI provider could complete this step. "
+            + " | ".join(errors)
+        )
 
     gemini_output = None
     qwen_output = None
-    errors = []
-    has_qwen = bool(_openrouter_key())
 
     print(
         f"[ToonScripture] {section}: OpenRouter configured = {has_qwen}",
         flush=True,
     )
 
-    # Scene Production tries Qwen first so an exhausted Gemini scene project
-    # cannot prevent the second model from participating.
+    # Scene Production tries OpenRouter first so an exhausted Gemini scene
+    # project cannot prevent the second model from participating.
     if section == "scenes" and has_qwen:
         try:
             print("[ToonScripture] scenes: calling OpenRouter Free Models", flush=True)
