@@ -54,6 +54,91 @@ st.set_page_config(
     layout="wide",
 )
 
+# Regional OS-inspired workspace shell:
+# quiet chrome, persistent project context, one obvious production line.
+st.markdown(
+    """
+    <style>
+    .block-container {
+        max-width: 1280px;
+        padding-top: 1.4rem;
+        padding-bottom: 4rem;
+    }
+    [data-testid="stSidebar"] {
+        border-right: 1px solid rgba(128,128,128,.16);
+    }
+    [data-testid="stSidebar"] .block-container {
+        padding-top: 1rem;
+    }
+    div[data-testid="stMetric"] {
+        border: 1px solid rgba(128,128,128,.16);
+        border-radius: 14px;
+        padding: 12px 14px;
+    }
+    .ts-eyebrow {
+        font-size: .78rem;
+        opacity: .62;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        margin-bottom: .2rem;
+    }
+    .ts-projectbar {
+        border: 1px solid rgba(128,128,128,.18);
+        border-radius: 16px;
+        padding: 14px 16px;
+        margin: .25rem 0 1rem 0;
+    }
+    .ts-projectbar strong {
+        font-size: 1.04rem;
+    }
+    .ts-next {
+        border: 1px solid rgba(128,128,128,.18);
+        border-radius: 18px;
+        padding: 18px 20px;
+        margin: .5rem 0 1rem 0;
+    }
+    .ts-next-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-bottom: .25rem;
+    }
+    .ts-muted {
+        opacity: .68;
+        font-size: .9rem;
+    }
+    hr {
+        margin-top: 1.2rem !important;
+        margin-bottom: 1.2rem !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+MAIN_SECTIONS = [
+    "🏠 Home",
+    "📋 Story Checklist",
+    "✍️ Story & Script",
+    "🎨 Visual Bible",
+    "🎙️ Audio",
+    "🎞️ Scene Production",
+    "📺 YouTube",
+    "📦 Export",
+    "🗃️ Archive",
+]
+
+PIPELINE_SECTIONS = [
+    "✍️ Story & Script",
+    "🎨 Visual Bible",
+    "🎙️ Audio",
+    "🎞️ Scene Production",
+    "📺 YouTube",
+    "📦 Export",
+]
+
+if "main_section" not in st.session_state:
+    st.session_state.main_section = "🏠 Home"
+
 init_db()
 
 
@@ -215,41 +300,95 @@ def current_project():
 # =========================================================
 
 with st.sidebar:
-    st.markdown("# 🎬 ToonScripture")
-    st.caption("Cinematic Bible Story Studio")
-    st.divider()
+    st.markdown("## ToonScripture")
+    st.caption("Production OS")
 
     project = current_project()
 
-    st.markdown("### Current episode")
-
     if project:
         done, total = project_progress(project)
-        st.markdown(f"**{project['story_name']}**")
-        st.caption(
-            f"{project.get('bible_reference') or 'Bible reference not set'} · "
-            f"{project.get('target_minutes', 0)} min"
+        st.markdown(
+            f"""
+            <div class="ts-projectbar">
+                <div class="ts-eyebrow">Current episode</div>
+                <strong>{project['story_name']}</strong><br>
+                <span class="ts-muted">
+                    {project.get('bible_reference') or 'Bible reference not set'} ·
+                    {project.get('target_minutes', 0)} min
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
         st.progress(done / total)
-        st.caption(f"{done} of {total} preparation stages complete")
-        st.caption(f"Next: {next_step(project)}")
-
-        if st.button(
-            "Archive current story",
-            use_container_width=True,
-            key=f"archive_current_story_{project['id']}",
-        ):
-            set_project_status(project["id"], "archived")
-            st.session_state.pop("project_id", None)
-            st.session_state.main_section = "🗃️ Archive"
-            st.rerun()
+        st.caption(f"{done}/{total} production stages prepared")
     else:
-        st.caption("No episode yet.")
-        st.caption("Create your first episode from Home.")
+        st.caption("No active episode.")
+
+    st.markdown("### Production line")
+
+    if st.button(
+        "⌂  Dashboard",
+        use_container_width=True,
+        type="primary" if st.session_state.main_section == "🏠 Home" else "secondary",
+        key="nav_home",
+    ):
+        st.session_state.main_section = "🏠 Home"
+        st.rerun()
+
+    stage_labels = {
+        "✍️ Story & Script": "01  Story & Script",
+        "🎨 Visual Bible": "02  Visual Bible",
+        "🎙️ Audio": "03  Narration Audio",
+        "🎞️ Scene Production": "04  Scene Production",
+        "📺 YouTube": "05  YouTube Package",
+        "📦 Export": "06  Export",
+    }
+
+    for section in PIPELINE_SECTIONS:
+        if st.button(
+            stage_labels[section],
+            use_container_width=True,
+            type="primary" if st.session_state.main_section == section else "secondary",
+            key=f"nav_{section}",
+        ):
+            st.session_state.main_section = section
+            st.rerun()
 
     st.divider()
 
-    with st.expander("⚙️ Settings"):
+    utility_left, utility_right = st.columns(2)
+    with utility_left:
+        if st.button(
+            "Checklist",
+            use_container_width=True,
+            key="nav_checklist",
+        ):
+            st.session_state.main_section = "📋 Story Checklist"
+            st.rerun()
+    with utility_right:
+        if st.button(
+            "Archive",
+            use_container_width=True,
+            key="nav_archive",
+        ):
+            st.session_state.main_section = "🗃️ Archive"
+            st.rerun()
+
+    if project:
+        with st.expander("Episode actions"):
+            st.caption(next_step(project))
+            if st.button(
+                "Archive current story",
+                use_container_width=True,
+                key=f"archive_current_story_{project['id']}",
+            ):
+                set_project_status(project["id"], "archived")
+                st.session_state.pop("project_id", None)
+                st.session_state.main_section = "🗃️ Archive"
+                st.rerun()
+
+    with st.expander("⚙️ System"):
         st.caption(
             "Most people will not need to change anything here."
         )
@@ -523,35 +662,40 @@ def start_new_episode_dialog():
 
 
 # =========================================================
-# HEADER
+# WORKSPACE HEADER
 # =========================================================
 
-st.title("ToonScripture OS")
-st.caption(
-    "A simple workspace for turning a Bible story into a cinematic YouTube episode."
-)
+main_section = st.session_state.main_section
 
-MAIN_SECTIONS = [
-    "🏠 Home",
-    "📋 Story Checklist",
-    "✍️ Story & Script",
-    "🎨 Visual Bible",
-    "🎙️ Audio",
-    "🎞️ Scene Production",
-    "📺 YouTube",
-    "📦 Export",
-    "🗃️ Archive",
-]
+page_names = {
+    "🏠 Home": "Dashboard",
+    "📋 Story Checklist": "Story Checklist",
+    "✍️ Story & Script": "Story & Script",
+    "🎨 Visual Bible": "Visual Bible",
+    "🎙️ Audio": "Narration Audio",
+    "🎞️ Scene Production": "Scene Production",
+    "📺 YouTube": "YouTube Package",
+    "📦 Export": "Export",
+    "🗃️ Archive": "Archive",
+}
 
-if "main_section" not in st.session_state:
-    st.session_state.main_section = "🏠 Home"
+st.markdown('<div class="ts-eyebrow">ToonScripture OS</div>', unsafe_allow_html=True)
+st.title(page_names.get(main_section, "Workspace"))
 
-main_section = st.segmented_control(
-    "Workspace section",
-    MAIN_SECTIONS,
-    key="main_section",
-    label_visibility="collapsed",
-)
+if project:
+    done, total = project_progress(project)
+    st.markdown(
+        f"""
+        <div class="ts-projectbar">
+            <strong>{project['story_name']}</strong>
+            <span class="ts-muted">
+                &nbsp;·&nbsp; {project.get('target_minutes', 0)} min
+                &nbsp;·&nbsp; {done}/{total} stages prepared
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # =========================================================
@@ -569,25 +713,41 @@ with page_root.container():
     # =========================================================
 
     if main_section == "🏠 Home":
-        st.header("What would you like to do?")
-
-        st.markdown("### How it works")
-        h1, h2, h3, h4, h5 = st.columns(5)
-        h1.markdown("**1. Pick a story**\n\nChoose what you want to make.")
-        h2.markdown("**2. Write it**\n\nShape the story and narration.")
-        h3.markdown("**3. Lock the look**\n\nApprove characters and locations.")
-        h4.markdown("**4. Make scenes**\n\nGenerate and check each shot.")
-        h5.markdown("**5. Publish**\n\nCreate audio and YouTube packaging.")
-
-        st.divider()
-
         if project:
-            st.markdown("## Continue your current episode")
-            render_project_card(project)
-            st.caption(
-                "Open any tab above whenever you want. "
-                "The app shows the recommended next step, but it never locks you into it."
+            st.markdown(
+                f"""
+                <div class="ts-next">
+                    <div class="ts-eyebrow">Next action</div>
+                    <div class="ts-next-title">{next_step(project)}</div>
+                    <div class="ts-muted">
+                        Keep moving through the production line. Your episode stays in context.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
+
+            next_destination = "✍️ Story & Script"
+            if project.get("critique_json") and not project.get("character_bible_json"):
+                next_destination = "🎨 Visual Bible"
+            elif project.get("character_bible_json") and not list_project_assets(project["id"], "narration_audio"):
+                next_destination = "🎙️ Audio"
+            elif project.get("character_bible_json") and not project.get("scenes_json"):
+                next_destination = "🎞️ Scene Production"
+            elif project.get("scenes_json") and not project.get("package_json"):
+                next_destination = "📺 YouTube"
+            elif project.get("package_json"):
+                next_destination = "📦 Export"
+
+            if st.button(
+                "Continue production →",
+                type="primary",
+                use_container_width=True,
+                key="dashboard_continue",
+            ):
+                st.session_state.main_section = next_destination
+                st.rerun()
+
             st.divider()
 
         summary = catalog_summary()
