@@ -33,6 +33,12 @@ from db import (
     ai_usage_today,
     using_supabase,
 )
+from story_catalog import (
+    catalog_structure_summary,
+    list_catalog_stories,
+    list_story_episodes,
+    link_project_to_episode,
+)
 from workflow import (
     develop_treatment,
     draft_script,
@@ -43,6 +49,9 @@ from workflow import (
     _api_key,
     _api_key_count,
     _openrouter_key,
+    _anthropic_key,
+    analyze_catalog_batch,
+    analyze_catalog_person_structure,
     narration_text,
     list_tts_voices,
     generate_tts_bytes,
@@ -413,6 +422,17 @@ with st.sidebar:
                     "Render is not detecting OPENROUTER_API_KEY in the running service."
                 )
 
+            if _anthropic_key():
+                st.success("Claude creative writing is connected", icon="✅")
+                st.caption(
+                    "Claude will handle script and retention writing in Auto mode."
+                )
+            else:
+                st.caption(
+                    "Claude is optional. Without ANTHROPIC_API_KEY, the existing "
+                    "Gemini + OpenRouter workflow stays active."
+                )
+
             if "_ai_usage_cache" not in st.session_state:
                 st.session_state["_ai_usage_cache"] = ai_usage_today()
 
@@ -445,6 +465,7 @@ with st.sidebar:
                 ("Project H · Frame review", "GEMINI_API_KEY_H"),
                 ("Project I · Visual Bible", "GEMINI_API_KEY_I"),
                 ("OpenRouter Free AI", "OPENROUTER_FREE_AI"),
+                ("Anthropic Claude", "ANTHROPIC_CLAUDE"),
             ]
 
             for label, key_name in provider_rows:
@@ -529,98 +550,205 @@ def start_new_episode_dialog():
         key="dialog_catalog_search",
     )
 
-    rows = list_catalog_people(
-        search=search,
-        playlist=selected_series_filter or "",
-        limit=1000,
-    )
-    rows = [
-        row for row in rows
-        if (row.get("production_status") or "not_started") != "completed"
-    ]
+    structured = list_catalog_stories(search=search, limit=1000)
 
-    if rows:
-        choices = {
+    if structured:
+        st.markdown("### Production stories")
+        structured_choices = {
             row["id"]: (
-                f"{row['name']} · "
-                f"{row.get('bible_references') or 'Bible reference not set'}"
+                f"{row['story_title']} · "
+                f"{int(row.get('episode_count') or 1)} episode"
+                + ("s" if int(row.get("episode_count") or 1) != 1 else "")
             )
-            for row in rows
+            for row in structured
         }
 
-        selected_id = st.selectbox(
-            "Choose a story or character",
-            list(choices.keys()),
-            format_func=lambda cid: choices[cid],
-            key="dialog_story_choice",
+        story_id = st.selectbox(
+            "Choose a structured story",
+            list(structured_choices.keys()),
+            format_func=lambda sid: structured_choices[sid],
+            key="dialog_structured_story",
         )
+        selected_story = next(
+            row for row in structured if row["id"] == story_id
+        )
+        episodes = list_story_episodes(story_id)
 
-        selected = next(row for row in rows if row["id"] == selected_id)
-
-        st.markdown(f"### {selected['name']}")
-        if selected.get("story_role"):
-            st.write(selected["story_role"])
-
-        info1, info2, info3 = st.columns(3)
-        with info1:
-            st.markdown("**Bible**")
-            st.write(selected.get("bible_references") or "Not set")
-        with info2:
-            st.markdown("**Priority**")
-            st.write(selected.get("priority") or "Not set")
-        with info3:
-            st.markdown("**Series**")
-            st.write(selected.get("playlist_series") or "Not assigned")
-
-        if selected.get("primary_environment"):
-            st.markdown(
-                f"**Main setting:** {selected['primary_environment']}"
+        if episodes:
+            episode_choices = {
+                row["id"]: row.get("display_title") or row.get("episode_title")
+                for row in episodes
+            }
+            episode_id = st.selectbox(
+                "Choose the episode",
+                list(episode_choices.keys()),
+                format_func=lambda eid: episode_choices[eid],
+                key="dialog_structured_episode",
             )
-        if selected.get("youtube_hook"):
-            st.info(selected["youtube_hook"])
-
-        episode_title = st.text_input(
-            "Episode title",
-            value=selected["name"],
-            help="Make it specific, e.g. Daniel in the Lions' Den.",
-            key="dialog_episode_title",
-        )
-        bible_reference = st.text_input(
-            "Bible reference",
-            value=selected.get("bible_references") or "",
-            key="dialog_bible_reference",
-        )
-        runtime = st.select_slider(
-            "How long should the episode be?",
-            options=[4.0, 6.0, 8.0, 10.0, 12.0, 15.0],
-            value=8.0,
-            format_func=lambda x: f"{int(x)} minutes",
-            key="dialog_runtime",
-        )
-
-        if st.button(
-            "Create this episode",
-            type="primary",
-            use_container_width=True,
-            key="dialog_create_episode",
-        ):
-            pid = create_project(
-                episode_title,
-                bible_reference,
-                runtime,
-                "long_form",
+            selected_episode = next(
+                row for row in episodes if row["id"] == episode_id
             )
-            link_project(
-                pid,
-                person_id=selected_id,
-                episode_title=episode_title,
+
+            st.caption(
+                selected_episode.get("narrative_scope")
+                or selected_story.get("structure_reason")
+                or ""
             )
-            set_catalog_production_status(selected_id, "in_progress")
-            st.session_state.project_id = pid
-            st.session_state.main_section = "✍️ Story & Script"
-            st.rerun()
-    else:
-        st.warning("No matching story was found.")
+
+            episode_title = selected_episode.get("display_title") or selected_episode.get("episode_title")
+            bible_reference = (
+                selected_episode.get("bible_reference")
+                or selected_story.get("bible_references")
+                or ""
+            )
+            recommended = selected_episode.get("recommended_runtime_minutes") or 8
+            runtime_options = [4.0, 6.0, 8.0, 10.0, 12.0, 15.0]
+            try:
+                runtime_default = min(
+                    runtime_options,
+                    key=lambda value: abs(value - float(recommended)),
+                )
+            except Exception:
+                runtime_default = 8.0
+
+            runtime = st.select_slider(
+                "How long should the episode be?",
+                options=runtime_options,
+                value=runtime_default,
+                format_func=lambda x: f"{int(x)} minutes",
+                key="dialog_structured_runtime",
+            )
+
+            if st.button(
+                "Create this structured episode",
+                type="primary",
+                use_container_width=True,
+                key="dialog_create_structured_episode",
+            ):
+                pid = create_project(
+                    episode_title,
+                    bible_reference,
+                    runtime,
+                    "long_form",
+                )
+                link_project(
+                    pid,
+                    episode_title=episode_title,
+                )
+                link_project_to_episode(
+                    pid,
+                    story_id=story_id,
+                    episode_id=episode_id,
+                )
+                st.session_state.project_id = pid
+                st.session_state.main_section = "✍️ Story & Script"
+                st.rerun()
+
+        st.divider()
+
+    with st.expander(
+        "Character catalogue / stories not structured yet",
+        expanded=not bool(structured),
+    ):
+        rows = list_catalog_people(
+            search=search,
+            playlist=selected_series_filter or "",
+            limit=1000,
+        )
+        rows = [
+            row for row in rows
+            if (row.get("production_status") or "not_started") != "completed"
+        ]
+
+        if rows:
+            choices = {
+                row["id"]: (
+                    f"{row['name']} · "
+                    f"{row.get('bible_references') or 'Bible reference not set'}"
+                )
+                for row in rows
+            }
+
+            selected_id = st.selectbox(
+                "Choose a story or character",
+                list(choices.keys()),
+                format_func=lambda cid: choices[cid],
+                key="dialog_story_choice",
+            )
+
+            selected = next(row for row in rows if row["id"] == selected_id)
+
+            st.markdown(f"### {selected['name']}")
+            if selected.get("story_role"):
+                st.write(selected["story_role"])
+
+            info1, info2, info3 = st.columns(3)
+            with info1:
+                st.markdown("**Bible**")
+                st.write(selected.get("bible_references") or "Not set")
+            with info2:
+                st.markdown("**Priority**")
+                st.write(selected.get("priority") or "Not set")
+            with info3:
+                st.markdown("**Series**")
+                st.write(selected.get("playlist_series") or "Not assigned")
+
+            if st.button(
+                "Let Story Architect structure this entry",
+                use_container_width=True,
+                key="dialog_analyze_story",
+            ):
+                with st.spinner("Deciding whether this needs one, two or three episodes..."):
+                    result = analyze_catalog_person_structure(selected_id)
+                story = result.get("story") or {}
+                episode_count = int(story.get("episode_count") or 1)
+                st.success(
+                    f"Structured as {episode_count} episode"
+                    + ("s." if episode_count != 1 else ".")
+                )
+                st.rerun()
+
+            episode_title = st.text_input(
+                "Episode title",
+                value=selected["name"],
+                help="You can still create an episode directly before structuring it.",
+                key="dialog_episode_title",
+            )
+            bible_reference = st.text_input(
+                "Bible reference",
+                value=selected.get("bible_references") or "",
+                key="dialog_bible_reference",
+            )
+            runtime = st.select_slider(
+                "Target length",
+                options=[4.0, 6.0, 8.0, 10.0, 12.0, 15.0],
+                value=8.0,
+                format_func=lambda x: f"{int(x)} minutes",
+                key="dialog_runtime",
+            )
+
+            if st.button(
+                "Create without structuring",
+                use_container_width=True,
+                key="dialog_create_episode",
+            ):
+                pid = create_project(
+                    episode_title,
+                    bible_reference,
+                    runtime,
+                    "long_form",
+                )
+                link_project(
+                    pid,
+                    person_id=selected_id,
+                    episode_title=episode_title,
+                )
+                set_catalog_production_status(selected_id, "in_progress")
+                st.session_state.project_id = pid
+                st.session_state.main_section = "✍️ Story & Script"
+                st.rerun()
+        else:
+            st.warning("No matching story was found.")
 
     st.divider()
     st.markdown("### Or create one manually")
@@ -838,6 +966,60 @@ with page_root.container():
                 progress["completed"] / progress["total"],
                 text=f"{progress['completed']} of {progress['total']} completed",
             )
+
+        st.divider()
+
+        structure = catalog_structure_summary()
+        st.markdown("### Story Architect")
+        st.caption(
+            "The AI groups character records into production stories and decides "
+            "whether each story genuinely needs 1, 2 or 3 episodes."
+        )
+
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric("Structured stories", structure["stories_total"])
+        a2.metric("Single-episode", structure["single_episode"])
+        a3.metric("Multi-part", structure["multi_episode"])
+        a4.metric("Still to analyze", structure["unstructured_people"])
+
+        batch_col1, batch_col2 = st.columns(2)
+        with batch_col1:
+            if st.button(
+                "Analyze next 10",
+                use_container_width=True,
+                disabled=structure["unstructured_people"] == 0,
+                key="analyze_catalog_10",
+            ):
+                with st.spinner("Story Architect is updating the catalog..."):
+                    results = analyze_catalog_batch(limit=10)
+                failures = [row for row in results if not row.get("ok")]
+                if failures:
+                    st.warning(
+                        f"Structured {len(results) - len(failures)} entries; "
+                        f"{len(failures)} need another pass."
+                    )
+                else:
+                    st.success(f"Structured {len(results)} catalog entries.")
+                st.rerun()
+
+        with batch_col2:
+            if st.button(
+                "Analyze next 25",
+                use_container_width=True,
+                disabled=structure["unstructured_people"] == 0,
+                key="analyze_catalog_25",
+            ):
+                with st.spinner("Story Architect is updating the catalog..."):
+                    results = analyze_catalog_batch(limit=25)
+                failures = [row for row in results if not row.get("ok")]
+                if failures:
+                    st.warning(
+                        f"Structured {len(results) - len(failures)} entries; "
+                        f"{len(failures)} need another pass."
+                    )
+                else:
+                    st.success(f"Structured {len(results)} catalog entries.")
+                st.rerun()
 
         st.divider()
 
