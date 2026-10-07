@@ -20,6 +20,8 @@ from db import (
     import_spreadsheet,
     seed_catalog_if_empty,
     save_reference_asset,
+    add_reference_image,
+    reference_image_paths,
     get_reference_asset,
     list_reference_assets,
     save_project_asset,
@@ -1362,7 +1364,8 @@ with page_root.container():
 
                 st.caption(
                     "Everything is shown below in one continuous sheet. "
-                    "Review from top to bottom and approve references as you go."
+                    "Each subject can have a primary continuity image plus as many supporting "
+                    "references as you need. Add more at any point in production."
                 )
                 st.divider()
 
@@ -1456,75 +1459,134 @@ with page_root.container():
                                 for value in variation:
                                     st.write("•", value)
 
-                        st.markdown("### Approved reference image")
+                        st.markdown("### Reference board")
                         saved_reference = reference_lookup.get(
                             (key, selected_name)
                         )
-                        signed_reference_url = None
-                        if saved_reference and saved_reference.get("image_path"):
-                            try:
-                                signed_reference_url = signed_asset_url(
-                                    saved_reference["image_path"]
-                                )
-                            except Exception:
-                                signed_reference_url = None
 
-                        if signed_reference_url:
-                            st.image(
-                                signed_reference_url,
-                                caption="Approved reference",
-                                width=360,
+                        reference_paths = reference_image_paths(saved_reference)
+                        reference_urls = []
+                        for path in reference_paths:
+                            try:
+                                url = signed_asset_url(path)
+                            except Exception:
+                                url = None
+                            if url:
+                                reference_urls.append(url)
+
+                        if reference_urls:
+                            st.caption(
+                                f"{len(reference_urls)} approved reference image"
+                                + ("s" if len(reference_urls) != 1 else "")
+                                + " saved for continuity."
                             )
-                            st.success("This reference is locked for continuity.")
+                            ref_columns = st.columns(min(3, len(reference_urls)))
+                            for ref_index, ref_url in enumerate(reference_urls):
+                                with ref_columns[ref_index % len(ref_columns)]:
+                                    st.image(
+                                        ref_url,
+                                        caption=(
+                                            "Primary reference"
+                                            if ref_index == 0
+                                            else f"Reference {ref_index + 1}"
+                                        ),
+                                        use_container_width=True,
+                                    )
                         else:
                             st.caption(
-                                "Generate this reference in Google Flow, "
-                                "then upload the version you want to lock."
+                                "No approved images yet. Generate references in Google Flow "
+                                "or add any approved images you already have."
                             )
 
-                        uploaded_reference = st.file_uploader(
-                            f"Upload approved reference image for {selected_name}",
+                        if not saved_reference:
+                            uploaded_reference = st.file_uploader(
+                                f"Upload the primary reference for {selected_name}",
+                                type=["png", "jpg", "jpeg", "webp"],
+                                key=(
+                                    f"reference_upload_{project['id']}_"
+                                    f"{key}_{item_index}"
+                                ),
+                            )
+
+                            if uploaded_reference and st.button(
+                                f"Set primary reference for {selected_name}",
+                                type="primary",
+                                use_container_width=True,
+                                key=(
+                                    f"save_reference_{project['id']}_"
+                                    f"{key}_{item_index}"
+                                ),
+                            ):
+                                with st.spinner(
+                                    f"Saving {selected_name} as the primary reference..."
+                                ):
+                                    save_reference_asset(
+                                        project_id=project["id"],
+                                        reference_type=key,
+                                        name=selected_name,
+                                        file_bytes=uploaded_reference.getvalue(),
+                                        filename=uploaded_reference.name,
+                                        content_type=(
+                                            uploaded_reference.type
+                                            or "application/octet-stream"
+                                        ),
+                                        master_prompt=prompt,
+                                        identity_lock=(
+                                            item.get(lock_key)
+                                            if lock_key
+                                            else None
+                                        ),
+                                        negative_lock=(
+                                            item.get("negative_identity_lock")
+                                            or item.get("negative_group_lock")
+                                        ),
+                                    )
+                                st.success("Primary reference saved.")
+                                st.rerun()
+                        else:
+                            st.success(
+                                "Primary reference locked. You can keep adding supporting references."
+                            )
+
+                        extra_references = st.file_uploader(
+                            f"Add more references for {selected_name}",
                             type=["png", "jpg", "jpeg", "webp"],
+                            accept_multiple_files=True,
                             key=(
-                                f"reference_upload_{project['id']}_"
+                                f"extra_reference_upload_{project['id']}_"
                                 f"{key}_{item_index}"
+                            ),
+                            help=(
+                                "Add alternate angles, expressions, costumes, lighting studies, "
+                                "prop details or environment views. These do not replace the primary image."
                             ),
                         )
 
-                        if uploaded_reference and st.button(
-                            f"Use this as the official reference for {selected_name}",
-                            type="primary",
+                        if extra_references and st.button(
+                            f"Add {len(extra_references)} reference"
+                            + ("s" if len(extra_references) != 1 else ""),
                             use_container_width=True,
                             key=(
-                                f"save_reference_{project['id']}_"
+                                f"add_reference_{project['id']}_"
                                 f"{key}_{item_index}"
                             ),
                         ):
                             with st.spinner(
-                                f"Saving {selected_name} as the approved reference..."
+                                f"Adding references to {selected_name}..."
                             ):
-                                save_reference_asset(
-                                    project_id=project["id"],
-                                    reference_type=key,
-                                    name=selected_name,
-                                    file_bytes=uploaded_reference.getvalue(),
-                                    filename=uploaded_reference.name,
-                                    content_type=(
-                                        uploaded_reference.type
-                                        or "application/octet-stream"
-                                    ),
-                                    master_prompt=prompt,
-                                    identity_lock=(
-                                        item.get(lock_key)
-                                        if lock_key
-                                        else None
-                                    ),
-                                    negative_lock=(
-                                        item.get("negative_identity_lock")
-                                        or item.get("negative_group_lock")
-                                    ),
-                                )
-                            st.success("Reference saved.")
+                                for uploaded in extra_references:
+                                    add_reference_image(
+                                        project_id=project["id"],
+                                        reference_type=key,
+                                        name=selected_name,
+                                        file_bytes=uploaded.getvalue(),
+                                        filename=uploaded.name,
+                                        content_type=(
+                                            uploaded.type
+                                            or "application/octet-stream"
+                                        ),
+                                    )
+                            st.success("Additional references added.")
                             st.rerun()
 
                         st.divider()
