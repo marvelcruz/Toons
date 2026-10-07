@@ -513,6 +513,87 @@ Produce the single best final JSON output for section: {section}.
     )
 
 
+
+def _synthesize_creative_room(
+    system_prompt,
+    user_prompt,
+    temperature,
+    section,
+    gemini_output=None,
+    openrouter_output=None,
+    claude_output=None,
+):
+    candidates = {}
+    if gemini_output is not None:
+        candidates["Gemini"] = gemini_output
+    if openrouter_output is not None:
+        candidates["OpenRouter Free"] = openrouter_output
+    if claude_output is not None:
+        candidates["Claude"] = claude_output
+
+    if not candidates:
+        raise RuntimeError("No creative candidates were available to synthesize.")
+
+    if len(candidates) == 1:
+        return next(iter(candidates.values()))
+
+    synthesis_system = """
+You are ToonScripture's senior editorial director running a collaborative writers' room.
+
+You receive independent candidate outputs from multiple AI collaborators.
+Your job is NOT to pick one winner. Build a stronger final result by combining
+the best reasoning, writing, structure, emotional detail, retention ideas and
+scriptural grounding from all useful candidates.
+
+Rules:
+- Follow the original requested JSON schema exactly.
+- Preserve Scripture and factual accuracy above stylistic preference.
+- Reconcile contradictions instead of blindly averaging them.
+- Keep the strongest specific ideas and remove weaker duplication.
+- Improve pacing, clarity, emotional movement, cinematic usefulness and retention.
+- Do not mention the collaboration process in the final output.
+- Return valid JSON only.
+"""
+
+    synthesis_prompt = f"""
+ORIGINAL SYSTEM INSTRUCTION:
+{system_prompt}
+
+ORIGINAL TASK:
+{user_prompt}
+
+COLLABORATOR CANDIDATES:
+{json.dumps(candidates, ensure_ascii=False, indent=2)}
+
+Create one unified final JSON result for section: {section}.
+"""
+
+    # Gemini acts as the editorial compositor when available. If that final
+    # synthesis call fails, OpenRouter gets a chance to combine the room.
+    try:
+        return _call_gemini_only(
+            synthesis_system,
+            synthesis_prompt,
+            temperature=min(float(temperature or 0.3), 0.3),
+            section=section,
+        )
+    except Exception as gemini_exc:
+        if _openrouter_key():
+            try:
+                return _call_qwen_json(
+                    synthesis_system,
+                    synthesis_prompt,
+                    temperature=min(float(temperature or 0.3), 0.3),
+                    section=section,
+                )
+            except Exception as openrouter_exc:
+                raise RuntimeError(
+                    f"Creative synthesis failed. Gemini: {gemini_exc} | "
+                    f"OpenRouter: {openrouter_exc}"
+                ) from openrouter_exc
+        raise
+
+
 def _call_gemini_only(system_prompt, user_prompt, temperature=0.3, section="general"):
     key_entries = _api_keys_for(section)
     if not key_entries:
@@ -733,38 +814,36 @@ def _call_gemini_only(system_prompt, user_prompt, temperature=0.3, section="gene
 
 
 def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
-    # Creative work prefers the existing OpenRouter free-model pool first.
-    # Gemini remains the reliable fallback. Claude is optional and only used
-    # when explicitly selected/configured.
+    # Creative work runs as a writers' room instead of a primary/fallback chain.
+    # Gemini and the OpenRouter free-model pool independently work the same task,
+    # then ToonScripture synthesizes their strongest ideas into one result.
+    # Claude can join the room too when explicitly connected.
     creative_sections = {"script", "retention"}
     has_qwen = bool(_openrouter_key())
     errors = []
 
     if section in creative_sections:
-        provider = _creative_provider()
+        gemini_output = None
+        qwen_output = None
+        claude_output = None
 
-        if provider == "claude" and _anthropic_key():
-            try:
-                return _call_claude_json(
-                    system_prompt,
-                    user_prompt,
-                    temperature=temperature,
-                    section=section,
-                )
-            except Exception as exc:
-                errors.append(f"Claude: {exc}")
-                print(
-                    f"[ToonScripture] {section}: Claude failed, falling back: {exc}",
-                    flush=True,
-                )
+        try:
+            gemini_output = _call_gemini_only(
+                system_prompt,
+                user_prompt,
+                temperature=temperature,
+                section=section,
+            )
+        except Exception as exc:
+            errors.append(f"Gemini: {exc}")
+            print(
+                f"[ToonScripture] {section}: Gemini collaborator failed: {exc}",
+                flush=True,
+            )
 
         if has_qwen:
             try:
-                print(
-                    f"[ToonScripture] {section}: trying OpenRouter Free Models first",
-                    flush=True,
-                )
-                return _call_qwen_json(
+                qwen_output = _call_qwen_json(
                     system_prompt,
                     user_prompt,
                     temperature=temperature,
@@ -773,35 +852,60 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
             except Exception as exc:
                 errors.append(f"OpenRouter Free Models: {exc}")
                 print(
-                    f"[ToonScripture] {section}: OpenRouter Free Models failed, falling back to Gemini: {exc}",
+                    f"[ToonScripture] {section}: OpenRouter collaborator failed: {exc}",
                     flush=True,
                 )
 
-        try:
-            return _call_gemini_only(
-                system_prompt,
-                user_prompt,
-                temperature=temperature,
-                section=section,
-            )
-        except Exception as exc:
-            errors.append(f"Gemini: {exc}")
-
-        if provider == "auto" and _anthropic_key():
+        provider = _creative_provider()
+        if provider in {"auto", "claude"} and _anthropic_key():
             try:
-                return _call_claude_json(
+                claude_output = _call_claude_json(
                     system_prompt,
                     user_prompt,
                     temperature=temperature,
                     section=section,
                 )
             except Exception as exc:
-                errors.append(f"Claude fallback: {exc}")
+                errors.append(f"Claude: {exc}")
+                print(
+                    f"[ToonScripture] {section}: Claude collaborator failed: {exc}",
+                    flush=True,
+                )
 
-        raise RuntimeError(
-            "No creative AI provider could complete this step. "
-            + " | ".join(errors)
-        )
+        available = [
+            item
+            for item in (gemini_output, qwen_output, claude_output)
+            if item is not None
+        ]
+
+        if not available:
+            raise RuntimeError(
+                "No creative AI collaborator could complete this step. "
+                + " | ".join(errors)
+            )
+
+        if len(available) == 1:
+            return available[0]
+
+        try:
+            return _synthesize_creative_room(
+                system_prompt,
+                user_prompt,
+                temperature,
+                section,
+                gemini_output=gemini_output,
+                openrouter_output=qwen_output,
+                claude_output=claude_output,
+            )
+        except Exception as exc:
+            errors.append(f"Creative synthesis: {exc}")
+            # If synthesis itself fails, prefer the grounded Gemini candidate,
+            # then the free-model candidate, then Claude.
+            if gemini_output is not None:
+                return gemini_output
+            if qwen_output is not None:
+                return qwen_output
+            return claude_output
 
     gemini_output = None
     qwen_output = None
