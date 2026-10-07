@@ -675,41 +675,71 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
 
 
 TREATMENT_SYSTEM = """
-You are ToonScripture's Bible-story researcher and adaptation editor.
-Create a retention-friendly treatment without inventing claims that contradict Scripture.
-Separate scriptural facts, historically plausible interpretation, and cinematic continuity decisions.
+You are ToonScripture's Bible-story researcher, adaptation editor and YouTube story architect.
+
+Build the story around viewer satisfaction, not gimmicks. The treatment must work for ANY requested
+runtime. There is no universal ideal YouTube length, so use exactly the length needed to sustain value
+without filler.
+
+Research-backed story principles to apply:
+- The title/thumbnail promise and the opening must match. The first 30 seconds must immediately confirm
+  the viewer made the right click.
+- Create a clear central dramatic question, then sustain curiosity, suspense or anticipation through
+  cause-and-effect progression.
+- Prioritize narrative transportation: concrete settings, understandable character goals, obstacles,
+  consequences, emotional stakes and vivid sceneable moments.
+- Do not flatten the story into chronology or event lists. Every beat must change the situation,
+  deepen meaning, increase stakes, reveal something important or pay off an earlier question.
+- Place compelling material early instead of saving all of the strongest moments for late in the video.
+- Build emotional flow across the full experience, with at least one memorable peak and a strong ending.
+- Avoid filler, repetition, generic sermon language and redundant explanation.
+- Preserve scriptural accuracy. Separate scriptural facts, historically plausible interpretation and
+  cinematic continuity decisions.
+
 Return valid JSON only.
 """
 
 SCRIPT_SYSTEM = """
-You are ToonScripture's senior long-form YouTube Bible-story writer and retention editor.
+You are ToonScripture's senior long-form YouTube Bible-story writer, story editor and retention engineer.
 
-Your job is to produce a FIRST-DRAFT script that is already strong enough to pass an honest
-95/100 retention review without needing a rewrite.
+Write for the exact requested runtime, whether it is 4, 6, 8, 10, 12, 15 minutes or another length.
+There is no default 10-minute structure.
 
-Before returning anything, silently do this inside the same response:
-1. Draft the complete script.
-2. Critique it for hook strength, pacing, clarity, emotional escalation, repetition,
-   chronology, specificity, sceneability, transitions and payoff.
-3. Rewrite weak sections internally.
-4. Only return the final improved script.
+Your job is to produce a FIRST-VISIBLE DRAFT that already performs like a polished final draft.
 
-Quality standard:
-- The opening must create immediate curiosity, tension or emotional stakes.
-- Do not use generic Bible-summary language.
-- Do not dump lists of miracles, events or facts.
-- Every section must move the story forward.
-- Use concrete, visual, sceneable narration.
-- Build emotional escalation rather than flat chronology.
-- Avoid repeated theological explanations or repeated conclusions.
-- Make transitions feel intentional, especially across large time jumps.
-- Preserve scriptural accuracy and clearly avoid unsupported claims.
-- Keep the narration family-friendly and cinematic rather than preachy.
-- The ending must deliver a satisfying emotional and thematic payoff.
-- Avoid filler written only to reach runtime.
-- Maintain enough detail for the requested runtime.
+Before returning the script, silently complete this internal process in the SAME response:
+1. Build a narrative spine from the approved treatment.
+2. Draft the complete script.
+3. Audit the draft against the retention rubric below.
+4. Rewrite weak sections internally.
+5. Return only the improved final script.
 
-Do not output your internal critique or a score.
+RETENTION RUBRIC:
+- Promise match: opening immediately delivers the value implied by the story/title concept.
+- First 30 seconds: specific, active, emotionally or intellectually compelling, with no throat-clearing.
+- Dramatic question: the viewer understands what is at stake and what they are waiting to discover.
+- Cause and effect: events feel connected rather than listed.
+- Narrative transportation: concrete places, goals, obstacles, consequences, emotional responses and
+  visualizable actions keep the viewer inside the story world.
+- Curiosity / suspense: unresolved questions are opened naturally and paid off clearly.
+- Progression: every section adds new value, changes the situation or increases stakes.
+- Emotional flow: intensity rises and falls intentionally instead of staying flat.
+- Clarity: chronology, time jumps, names, motives and theology are easy to follow.
+- Specificity: prefer precise story moments over abstract summary language.
+- Repetition control: do not repeat the same theological conclusion in different words.
+- Sceneability: narration should readily translate into visual beats.
+- Peak and ending: create a memorable emotional high point and a satisfying ending payoff.
+- Runtime discipline: no filler added merely to hit duration.
+
+WRITING RULES:
+- Preserve Scripture and the approved treatment.
+- Do not invent unsupported historical or theological claims.
+- Family-friendly, cinematic and emotionally clear.
+- Avoid generic sermon filler and rapid-fire event lists.
+- Use transitions that bridge large time jumps.
+- Keep dialogue sparse and purposeful unless directly supported or clearly framed as cinematic adaptation.
+- Do not output an internal score or critique.
+
 Return valid JSON only with exactly:
 {
   "hook": "",
@@ -721,12 +751,38 @@ Return valid JSON only with exactly:
 """
 
 CRITIQUE_SYSTEM = """
-You are a strict YouTube retention editor.
-Review the script for hook strength, pacing, clarity, emotional escalation, repetition and payoff.
+You are ToonScripture's strict YouTube retention and storytelling auditor.
+
 Score honestly. Do not inflate the score to satisfy a target.
-A score of 95+ should mean the script is genuinely exceptional for retention while remaining accurate,
-clear, emotionally coherent and suitable for the requested runtime.
-Return valid JSON only with score_100, strengths, problems, recommended_cuts, recommended_additions.
+A 95+ score means the script is genuinely exceptional, not merely competent.
+
+Evaluate:
+1. title/story promise alignment and opening delivery
+2. first-30-second hook strength
+3. central dramatic question and stakes
+4. curiosity, suspense and anticipation
+5. cause-and-effect progression
+6. narrative transportation and character involvement
+7. pacing and new-value density
+8. emotional flow and escalation
+9. clarity across chronology and transitions
+10. specificity and sceneability
+11. repetition/filler control
+12. memorable peak and ending payoff
+13. scriptural accuracy and responsible interpretation
+14. suitability for the requested runtime
+
+Penalize:
+- event-list narration
+- generic summary prose
+- repeated theological conclusions
+- unexplained time jumps
+- hooks that delay the actual story
+- weak middle sections
+- CTAs or filler that interrupt the narrative before payoff
+
+Return valid JSON only with:
+score_100, strengths, problems, recommended_cuts, recommended_additions.
 """
 
 RETENTION_REWRITE_SYSTEM = """
@@ -798,22 +854,54 @@ Return valid JSON only.
 
 def develop_treatment(project_id):
     p = get_project(project_id)
+    target_minutes = float(p['target_minutes'])
+    target_seconds = int(round(target_minutes * 60))
+
+    # Scale story density with runtime instead of forcing every episode into
+    # the same number of beats.
+    target_beats = max(5, min(18, round(target_minutes * 1.2)))
+
     prompt = f"""
 STORY: {p['story_name']}
 BIBLE REFERENCE: {p['bible_reference']}
-TARGET RUNTIME: {p['target_minutes']} minutes
+TARGET RUNTIME: {target_minutes:g} minutes ({target_seconds} seconds)
+TARGET STORY BEATS: approximately {target_beats}, adjusted naturally for the material
+
+Design the treatment so the full episode sustains attention at THIS runtime without filler.
 
 Return:
 {{
   "core_story": "",
+  "viewer_promise": "",
+  "central_dramatic_question": "",
+  "first_30_seconds": {{
+    "opening_image_or_moment": "",
+    "hook": "",
+    "promise_confirmation": "",
+    "question_or_tension_opened": ""
+  }},
   "scriptural_anchor": [],
   "historical_context": [],
   "cinematic_interpretations": [],
   "emotional_arc": "",
-  "opening_hook": "",
-  "story_beats": [],
+  "story_beats": [
+    {{
+      "beat": "",
+      "purpose": "",
+      "new_value": "",
+      "stakes_change": "",
+      "curiosity_or_suspense": "",
+      "payoff_or_transition": ""
+    }}
+  ],
+  "curiosity_loops": [
+    {{"open": "", "payoff": ""}}
+  ],
+  "emotional_peaks": [],
+  "top_moment_candidates": [],
   "accuracy_risks": [],
-  "ending_payoff": ""
+  "ending_payoff": "",
+  "anti_filler_notes": []
 }}
 """
     out = call_json(TREATMENT_SYSTEM, prompt, 0.25, section="treatment")
@@ -825,30 +913,40 @@ def draft_script(project_id):
     p = get_project(project_id)
     treatment = load_json(p, "treatment_json", {})
     target_minutes = float(p['target_minutes'])
-    target_words = int(round(target_minutes * 145))
+
+    # Spoken narration varies naturally by dramatic intensity. Use a flexible
+    # range instead of pretending every minute should contain the same number
+    # of words.
+    min_words = int(round(target_minutes * 125))
+    target_words = int(round(target_minutes * 140))
+    max_words = int(round(target_minutes * 155))
+    section_target = max(4, min(16, round(target_minutes * 0.9)))
 
     prompt = f"""
 TARGET RUNTIME: {target_minutes:g} minutes
-TARGET NARRATION LENGTH: about {target_words} words, with natural variation for dialogue and pacing.
+NARRATION RANGE: about {min_words}-{max_words} words
+WORKING TARGET: about {target_words} words
+EXPECTED MAJOR SECTIONS: approximately {section_target}, adjusted naturally for the story
 
 APPROVED TREATMENT:
 {json.dumps(treatment, indent=2)}
 
-FIRST-PASS QUALITY GATE:
-Write this as though it will immediately face a strict 95/100 retention review.
-Silently revise your own draft before returning it.
+FIRST-VISIBLE-DRAFT QUALITY GATE:
+This draft should be capable of scoring 95+ under the strict retention rubric without relying on
+later cleanup.
 
-Mandatory first-pass checks:
-- Hook is specific and compelling within the opening lines.
-- No rapid-fire event lists.
-- No redundant explanation of the same theological point.
-- Large time jumps are bridged clearly.
-- Each section has a distinct narrative purpose and emotional movement.
-- Abstract claims are converted into concrete story moments wherever possible.
-- Character motivations and stakes are understandable.
-- The story keeps escalating rather than flattening in the middle.
-- The final section pays off the central emotional promise of the opening.
-- The script remains faithful to the approved treatment and Scripture.
+Before returning it, silently audit and revise:
+- Does the first 30 seconds immediately fulfill the viewer promise?
+- Is there a clear dramatic question or tension the viewer wants resolved?
+- Does every section introduce new value rather than paraphrase the previous one?
+- Are chronology and time jumps effortless to follow?
+- Are suspense and curiosity created by the actual story rather than artificial clickbait?
+- Are there concrete visual moments that increase narrative transportation?
+- Is the strongest material brought forward instead of unnecessarily delayed?
+- Is the middle as purposeful as the beginning and ending?
+- Is there a memorable emotional peak?
+- Does the ending resolve the central promise and leave a strong final impression?
+- Is the script free of filler, generic sermon language and event-list narration?
 
 Return only the final script JSON.
 """
