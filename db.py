@@ -177,6 +177,7 @@ def _local_init_db():
             format TEXT DEFAULT 'long_form',
             status TEXT DEFAULT 'idea',
             treatment_json TEXT,
+            writer_room_json TEXT,
             script_json TEXT,
             critique_json TEXT,
             character_bible_json TEXT,
@@ -253,6 +254,15 @@ def _local_init_db():
         );
         """
     )
+    existing_project_columns = {
+        row["name"]
+        for row in con.execute("PRAGMA table_info(projects)").fetchall()
+    }
+    if "writer_room_json" not in existing_project_columns:
+        con.execute(
+            "ALTER TABLE projects ADD COLUMN writer_room_json TEXT"
+        )
+
     con.commit()
     con.close()
 
@@ -406,6 +416,7 @@ def create_project(
 def save_json(project_id, field, value, status=None):
     allowed = {
         "treatment_json",
+        "writer_room_json",
         "script_json",
         "critique_json",
         "character_bible_json",
