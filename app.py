@@ -1062,12 +1062,25 @@ with page_root.container():
                                 "The script has been improved automatically, but the honest critic "
                                 "still scored it below 95. Run the review again to continue improving it."
                             )
-                            st.button(
+                            if st.button(
                                 "Improve again toward 95+",
                                 type="primary",
                                 use_container_width=True,
                                 key="improve_again_retention",
-                            )
+                            ):
+                                try:
+                                    with st.spinner(
+                                        "Improving the script and checking retention again..."
+                                    ):
+                                        critique_script(project["id"])
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(
+                                        "The improvement pass could not finish right now. "
+                                        "Your best saved script is still safe."
+                                    )
+                                    with st.expander("Technical details"):
+                                        st.code(str(exc))
 
 
     # =========================================================
