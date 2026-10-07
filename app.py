@@ -42,6 +42,8 @@ from story_catalog import (
 from workflow import (
     develop_treatment,
     draft_script,
+    generate_writer_room,
+    synthesize_writer_room,
     critique_script,
     build_character_bible,
     plan_scenes,
@@ -1115,6 +1117,7 @@ with page_root.container():
             )
 
             treatment = load_json(project, "treatment_json", {})
+            writer_room = load_json(project, "writer_room_json", {})
             script = load_json(project, "script_json", {})
             critique = load_json(project, "critique_json", {})
 
@@ -1387,49 +1390,219 @@ with page_root.container():
             elif step == "2. Write the script":
                 if not treatment:
                     st.info(
-                        "Create the story treatment first so the script has a clear direction."
+                        "Create the story treatment first so the writers' room has a clear direction."
                     )
                 else:
-                    st.subheader("Write the narration script")
+                    st.subheader("AI Writers' Room")
                     st.write(
-                        "The script is written for cinematic narration and viewer retention."
+                        "Gemini, Claude and OpenRouter each write the full episode independently. "
+                        "Then they are scored blind before you move to the master script."
                     )
 
-                    script_error = None
+                    writer_error = None
 
-                    if st.button(
-                        "Write the script"
-                        if not script
-                        else "Rewrite the script",
-                        type="primary",
-                        use_container_width=True,
-                    ):
-                        try:
-                            with st.spinner("Writing the episode..."):
-                                draft_script(project["id"])
-                            st.rerun()
-                        except Exception as exc:
-                            script_error = str(exc)
+                    if not writer_room.get("providers"):
+                        if st.button(
+                            "Generate the 3 scripts",
+                            type="primary",
+                            use_container_width=True,
+                            key="generate_writer_room",
+                        ):
+                            try:
+                                with st.spinner(
+                                    "Gemini, Claude and OpenRouter are each writing their own full script..."
+                                ):
+                                    generate_writer_room(project["id"])
+                                st.rerun()
+                            except Exception as exc:
+                                writer_error = str(exc)
+                    else:
+                        if st.button(
+                            "Regenerate all 3 scripts",
+                            use_container_width=True,
+                            key="regenerate_writer_room",
+                        ):
+                            try:
+                                with st.spinner(
+                                    "Reopening the room and creating three fresh drafts..."
+                                ):
+                                    generate_writer_room(project["id"])
+                                st.rerun()
+                            except Exception as exc:
+                                writer_error = str(exc)
 
-                    if script_error:
-                        if "quota" in script_error.lower() or "429" in script_error:
-                            st.warning(
-                                "The primary Gemini project has reached its current API limit. "
-                                "Your existing script is still saved and has not been replaced. "
-                                "You can keep working with it and retry the rewrite later."
-                            )
-                        else:
-                            st.error(
-                                "The script could not be generated right now. "
-                                "Your existing work is still saved."
-                            )
-
+                    if writer_error:
+                        st.error(
+                            "The writers' room could not finish all of its work right now. "
+                            "Any drafts that were successfully saved are still safe."
+                        )
                         with st.expander("Technical details"):
-                            st.code(script_error)
+                            st.code(writer_error)
 
-                    show_script(script)
+                    providers = writer_room.get("providers", {}) or {}
+                    scorecards = writer_room.get("scorecards", {}) or {}
 
-                    if script:
+                    if providers:
+                        st.markdown("### The three drafts")
+                        st.caption(
+                            "These are the untouched individual drafts. The score is the blind jury average."
+                        )
+
+                        columns = st.columns(3)
+                        provider_order = [
+                            ("gemini", "Gemini"),
+                            ("claude", "Claude"),
+                            ("openrouter", "OpenRouter"),
+                        ]
+
+                        for col, (provider_key, provider_label) in zip(
+                            columns,
+                            provider_order,
+                        ):
+                            with col:
+                                item = providers.get(provider_key, {}) or {}
+                                card = scorecards.get(provider_key, {}) or {}
+                                candidate_script = item.get("script")
+                                average_score = card.get("average_score")
+
+                                st.markdown(f"## {provider_label}")
+                                if average_score is not None:
+                                    st.metric(
+                                        "Blind jury score",
+                                        f"{float(average_score):.1f}/100",
+                                    )
+                                elif candidate_script:
+                                    st.caption("Draft created · score unavailable")
+
+                                if candidate_script:
+                                    with st.expander(
+                                        f"Why the jury scored {provider_label} this way",
+                                        expanded=False,
+                                    ):
+                                        strengths = card.get("strengths", []) or []
+                                        weaknesses = card.get("weaknesses", []) or []
+                                        standout = card.get("standout_elements", []) or []
+
+                                        if strengths:
+                                            st.markdown("**Strengths**")
+                                            for value in strengths[:6]:
+                                                st.write("•", value)
+                                        if weaknesses:
+                                            st.markdown("**Weaknesses**")
+                                            for value in weaknesses[:6]:
+                                                st.write("•", value)
+                                        if standout:
+                                            st.markdown("**Standout material**")
+                                            for value in standout[:6]:
+                                                st.write("•", value)
+
+                                        judge_scores = card.get("judge_scores", []) or []
+                                        if judge_scores:
+                                            st.markdown("**Individual jury scores**")
+                                            for row in judge_scores:
+                                                st.caption(
+                                                    f"{str(row.get('judge') or '').title()}: "
+                                                    f"{float(row.get('score_100') or 0):.1f}/100"
+                                                )
+
+                                    show_script(candidate_script)
+                                else:
+                                    st.warning(
+                                        item.get("error")
+                                        or f"{provider_label} did not return a usable script."
+                                    )
+
+                        st.divider()
+
+                        if writer_room.get("status") != "master_ready":
+                            st.markdown("### Ready to combine the room?")
+                            st.write(
+                                "The next pass will mine the strongest hook, structure, emotional beats, "
+                                "Scripture-grounded explanations, transitions, dialogue and ending from "
+                                "all usable drafts, then rewrite them into one coherent master script."
+                            )
+
+                            if st.button(
+                                "Next → Build the crème de la crème",
+                                type="primary",
+                                use_container_width=True,
+                                key="build_master_script",
+                            ):
+                                try:
+                                    with st.spinner(
+                                        "Comparing the three scripts and building the master version..."
+                                    ):
+                                        synthesize_writer_room(project["id"])
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(
+                                        "The master-editor pass could not finish right now. "
+                                        "Your three scored drafts are still saved."
+                                    )
+                                    with st.expander("Technical details"):
+                                        st.code(str(exc))
+
+                    if writer_room.get("status") == "master_ready":
+                        blueprint = writer_room.get("editorial_blueprint", {}) or {}
+                        master_script = (
+                            writer_room.get("final_script")
+                            or script
+                            or {}
+                        )
+
+                        st.divider()
+                        st.markdown("## What the final script drew from the room")
+                        if blueprint.get("overall_strategy"):
+                            st.write(blueprint["overall_strategy"])
+
+                        source_map = blueprint.get("elements_taken_from_each", {}) or {}
+                        source_cols = st.columns(3)
+                        for col, (provider_key, provider_label) in zip(
+                            source_cols,
+                            [
+                                ("gemini", "From Gemini"),
+                                ("claude", "From Claude"),
+                                ("openrouter", "From OpenRouter"),
+                            ],
+                        ):
+                            with col:
+                                st.markdown(f"### {provider_label}")
+                                values = source_map.get(provider_key, []) or []
+                                if values:
+                                    for value in values:
+                                        st.write("•", value)
+                                else:
+                                    st.caption("No specific contribution was called out.")
+
+                        highlights = [
+                            ("Best hook", "best_hook_source"),
+                            ("Best structure", "best_structure_source"),
+                            ("Best emotional work", "best_emotional_source"),
+                            ("Best accuracy work", "best_accuracy_source"),
+                            ("Best retention work", "best_retention_source"),
+                        ]
+                        st.markdown("### Editorial decisions")
+                        for label, key in highlights:
+                            value = blueprint.get(key)
+                            if value:
+                                st.write(f"**{label}:** {value}")
+
+                        conflicts = blueprint.get("conflicts_resolved", []) or []
+                        if conflicts:
+                            with st.expander("Conflicts the master editor resolved"):
+                                for value in conflicts:
+                                    st.write("•", value)
+
+                        plan = blueprint.get("master_plan", []) or []
+                        if plan:
+                            with st.expander("Master plan"):
+                                for value in plan:
+                                    st.write("•", value)
+
+                        st.divider()
+                        st.markdown("## Final master script")
+                        show_script(master_script)
+
                         st.divider()
                         st.button(
                             "Next → Check viewer retention",
