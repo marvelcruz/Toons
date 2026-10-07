@@ -682,9 +682,42 @@ Return valid JSON only.
 """
 
 SCRIPT_SYSTEM = """
-You are ToonScripture's long-form YouTube Bible-story writer.
-Write cinematic, emotionally clear, family-friendly narration with strong retention.
-Avoid preachy filler. Use sceneable language. Return valid JSON only.
+You are ToonScripture's senior long-form YouTube Bible-story writer and retention editor.
+
+Your job is to produce a FIRST-DRAFT script that is already strong enough to pass an honest
+95/100 retention review without needing a rewrite.
+
+Before returning anything, silently do this inside the same response:
+1. Draft the complete script.
+2. Critique it for hook strength, pacing, clarity, emotional escalation, repetition,
+   chronology, specificity, sceneability, transitions and payoff.
+3. Rewrite weak sections internally.
+4. Only return the final improved script.
+
+Quality standard:
+- The opening must create immediate curiosity, tension or emotional stakes.
+- Do not use generic Bible-summary language.
+- Do not dump lists of miracles, events or facts.
+- Every section must move the story forward.
+- Use concrete, visual, sceneable narration.
+- Build emotional escalation rather than flat chronology.
+- Avoid repeated theological explanations or repeated conclusions.
+- Make transitions feel intentional, especially across large time jumps.
+- Preserve scriptural accuracy and clearly avoid unsupported claims.
+- Keep the narration family-friendly and cinematic rather than preachy.
+- The ending must deliver a satisfying emotional and thematic payoff.
+- Avoid filler written only to reach runtime.
+- Maintain enough detail for the requested runtime.
+
+Do not output your internal critique or a score.
+Return valid JSON only with exactly:
+{
+  "hook": "",
+  "sections": [
+    {"name":"", "purpose":"", "narration":"", "dialogue":[]}
+  ],
+  "closing": ""
+}
 """
 
 CRITIQUE_SYSTEM = """
@@ -791,19 +824,33 @@ Return:
 def draft_script(project_id):
     p = get_project(project_id)
     treatment = load_json(p, "treatment_json", {})
+    target_minutes = float(p['target_minutes'])
+    target_words = int(round(target_minutes * 145))
+
     prompt = f"""
-TARGET RUNTIME: {p['target_minutes']} minutes
+TARGET RUNTIME: {target_minutes:g} minutes
+TARGET NARRATION LENGTH: about {target_words} words, with natural variation for dialogue and pacing.
+
 APPROVED TREATMENT:
 {json.dumps(treatment, indent=2)}
 
-Return:
-{{
-  "hook": "",
-  "sections": [
-    {{"name":"", "purpose":"", "narration":"", "dialogue":[]}}
-  ],
-  "closing": ""
-}}
+FIRST-PASS QUALITY GATE:
+Write this as though it will immediately face a strict 95/100 retention review.
+Silently revise your own draft before returning it.
+
+Mandatory first-pass checks:
+- Hook is specific and compelling within the opening lines.
+- No rapid-fire event lists.
+- No redundant explanation of the same theological point.
+- Large time jumps are bridged clearly.
+- Each section has a distinct narrative purpose and emotional movement.
+- Abstract claims are converted into concrete story moments wherever possible.
+- Character motivations and stakes are understandable.
+- The story keeps escalating rather than flattening in the middle.
+- The final section pays off the central emotional promise of the opening.
+- The script remains faithful to the approved treatment and Scripture.
+
+Return only the final script JSON.
 """
     out = call_json(SCRIPT_SYSTEM, prompt, 0.35, section="script")
     save_json(project_id, "script_json", out, "script_ready")
