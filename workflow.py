@@ -1522,15 +1522,12 @@ Return:
     return out
 
 
-def draft_script(project_id):
+def _writer_room_script_prompt(project_id):
     p = get_project(project_id)
     treatment = load_json(p, "treatment_json", {})
-    target_minutes = float(p['target_minutes'])
+    target_minutes = float(p["target_minutes"])
     channel_learning = channel_performance_learning()
 
-    # Spoken narration varies naturally by dramatic intensity. Use a flexible
-    # range instead of pretending every minute should contain the same number
-    # of words.
     min_words = int(round(target_minutes * 125))
     target_words = int(round(target_minutes * 140))
     max_words = int(round(target_minutes * 155))
@@ -1569,9 +1566,362 @@ Before returning it, silently audit and revise:
 
 Return only the final script JSON.
 """
-    out = call_json(SCRIPT_SYSTEM, prompt, 0.35, section="script")
-    save_json(project_id, "script_json", out, "script_ready")
-    return out
+    return p, prompt
+
+
+WRITER_ROOM_JUDGE_SYSTEM = """
+You are ToonScripture's blind senior script jury.
+
+You will receive multiple anonymized scripts written for the same approved Bible-story treatment.
+Score EACH candidate independently. Do not reward a candidate because of style preference alone.
+Do not guess which model wrote which script.
+
+Score out of 100 using this weighted standard:
+- Scriptural accuracy and responsible interpretation: 20
+- Hook / first 30 seconds / promise match: 15
+- Story structure, cause-and-effect and clarity: 15
+- Emotional power and character involvement: 15
+- Retention, curiosity and pacing: 15
+- Specificity, sceneability and cinematic usefulness: 10
+- Ending payoff and memorability: 5
+- Runtime discipline, repetition control and polish: 5
+
+A 95+ should be genuinely exceptional.
+
+Return valid JSON exactly:
+{
+  "scores": [
+    {
+      "candidate_id": "A",
+      "score_100": 0,
+      "category_scores": {
+        "accuracy": 0,
+        "hook": 0,
+        "structure": 0,
+        "emotion": 0,
+        "retention": 0,
+        "sceneability": 0,
+        "ending": 0,
+        "polish": 0
+      },
+      "strengths": [],
+      "weaknesses": [],
+      "standout_elements": []
+    }
+  ]
+}
+"""
+
+
+MASTER_SCRIPT_SYSTEM = """
+You are ToonScripture's executive head writer and final editorial director.
+
+You receive three independent scripts plus blind jury scorecards.
+Your job is to produce the crème-de-la-crème script: not a compromise, not an average, and not a
+winner-takes-all selection.
+
+First identify the strongest usable elements across the room:
+- hook and opening language
+- narrative spine and ordering
+- strongest emotional beats
+- clearest Scripture-grounded explanations
+- strongest transitions
+- best dialogue or sceneable moments
+- strongest suspense / curiosity devices
+- strongest ending payoff
+
+Resolve contradictions using Scripture and the approved treatment.
+Reject weak material even if it came from the highest-scoring candidate.
+Do not stitch passages together mechanically. Rewrite everything into one coherent voice.
+
+Return valid JSON exactly:
+{
+  "editorial_blueprint": {
+    "overall_strategy": "",
+    "best_hook_source": "",
+    "best_structure_source": "",
+    "best_emotional_source": "",
+    "best_accuracy_source": "",
+    "best_retention_source": "",
+    "elements_taken_from_each": {
+      "gemini": [],
+      "claude": [],
+      "openrouter": []
+    },
+    "conflicts_resolved": [],
+    "master_plan": []
+  },
+  "final_script": {
+    "hook": "",
+    "sections": [
+      {"name":"", "purpose":"", "narration":"", "dialogue":[]}
+    ],
+    "closing": ""
+  }
+}
+"""
+
+
+def _score_writer_room_candidates(candidates, treatment):
+    usable = {
+        key: value
+        for key, value in candidates.items()
+        if isinstance(value, dict) and value.get("script")
+    }
+    if not usable:
+        raise RuntimeError("There are no writer-room scripts to score.")
+
+    id_map = {}
+    blind_scripts = {}
+    for candidate_id, (provider, item) in zip(
+        ["A", "B", "C"],
+        usable.items(),
+    ):
+        id_map[candidate_id] = provider
+        blind_scripts[candidate_id] = item["script"]
+
+    prompt = f"""
+APPROVED TREATMENT:
+{json.dumps(treatment, indent=2)}
+
+ANONYMIZED CANDIDATES:
+{json.dumps(blind_scripts, ensure_ascii=False, indent=2)}
+
+Score every candidate using the rubric. Return all candidates in one response.
+"""
+
+    judges = {}
+    judge_calls = [
+        ("gemini", lambda: _call_gemini_only(
+            WRITER_ROOM_JUDGE_SYSTEM, prompt, 0.1, section="retention"
+        )),
+        ("openrouter", lambda: _call_qwen_json(
+            WRITER_ROOM_JUDGE_SYSTEM, prompt, 0.1, section="retention"
+        )),
+    ]
+    if _anthropic_key():
+        judge_calls.append(
+            ("claude", lambda: _call_claude_json(
+                WRITER_ROOM_JUDGE_SYSTEM, prompt, 0.1, section="retention"
+            ))
+        )
+
+    for judge_name, call in judge_calls:
+        try:
+            judges[judge_name] = call()
+        except Exception as exc:
+            judges[judge_name] = {"error": str(exc), "scores": []}
+
+    scorecards = {}
+    for candidate_id, provider in id_map.items():
+        collected = []
+        notes = {
+            "strengths": [],
+            "weaknesses": [],
+            "standout_elements": [],
+        }
+
+        for judge_name, result in judges.items():
+            for row in result.get("scores", []) if isinstance(result, dict) else []:
+                if str(row.get("candidate_id")) != candidate_id:
+                    continue
+                try:
+                    score = float(row.get("score_100", 0) or 0)
+                except Exception:
+                    score = 0
+                collected.append({
+                    "judge": judge_name,
+                    "score_100": score,
+                    "category_scores": row.get("category_scores", {}),
+                })
+                for field in notes:
+                    for item in row.get(field, []) or []:
+                        if item not in notes[field]:
+                            notes[field].append(item)
+
+        average = (
+            round(sum(item["score_100"] for item in collected) / len(collected), 1)
+            if collected else None
+        )
+
+        scorecards[provider] = {
+            "average_score": average,
+            "judge_scores": collected,
+            **notes,
+        }
+
+    return {
+        "blind_id_map": id_map,
+        "judges": judges,
+        "scorecards": scorecards,
+    }
+
+
+def generate_writer_room(project_id):
+    p, prompt = _writer_room_script_prompt(project_id)
+    treatment = load_json(p, "treatment_json", {})
+
+    providers = {
+        "gemini": {
+            "label": "Gemini",
+            "script": None,
+            "error": None,
+        },
+        "claude": {
+            "label": "Claude",
+            "script": None,
+            "error": None,
+        },
+        "openrouter": {
+            "label": "OpenRouter",
+            "script": None,
+            "error": None,
+        },
+    }
+
+    try:
+        providers["gemini"]["script"] = _call_gemini_only(
+            SCRIPT_SYSTEM,
+            prompt,
+            0.35,
+            section="script",
+        )
+    except Exception as exc:
+        providers["gemini"]["error"] = str(exc)
+
+    if _anthropic_key():
+        try:
+            providers["claude"]["script"] = _call_claude_json(
+                SCRIPT_SYSTEM,
+                prompt,
+                0.35,
+                section="script",
+            )
+        except Exception as exc:
+            providers["claude"]["error"] = str(exc)
+    else:
+        providers["claude"]["error"] = "Claude is not connected."
+
+    if _openrouter_key():
+        try:
+            providers["openrouter"]["script"] = _call_qwen_json(
+                SCRIPT_SYSTEM,
+                prompt,
+                0.35,
+                section="script",
+            )
+        except Exception as exc:
+            providers["openrouter"]["error"] = str(exc)
+    else:
+        providers["openrouter"]["error"] = "OpenRouter is not connected."
+
+    usable_count = sum(
+        1 for item in providers.values()
+        if isinstance(item.get("script"), dict)
+    )
+    if usable_count == 0:
+        raise RuntimeError(
+            "None of the AI writers returned a usable script. "
+            + " | ".join(
+                f"{item['label']}: {item['error']}"
+                for item in providers.values()
+                if item.get("error")
+            )
+        )
+
+    scoring = _score_writer_room_candidates(providers, treatment)
+
+    room = {
+        "status": "drafts_scored",
+        "providers": providers,
+        "scorecards": scoring["scorecards"],
+        "jury": scoring["judges"],
+        "blind_id_map": scoring["blind_id_map"],
+        "editorial_blueprint": {},
+        "final_script": None,
+    }
+    save_json(project_id, "writer_room_json", room, "treatment_ready")
+    return room
+
+
+def synthesize_writer_room(project_id):
+    p = get_project(project_id)
+    room = load_json(p, "writer_room_json", {})
+    treatment = load_json(p, "treatment_json", {})
+
+    providers = room.get("providers", {}) or {}
+    scripts = {
+        name: item.get("script")
+        for name, item in providers.items()
+        if isinstance(item, dict) and isinstance(item.get("script"), dict)
+    }
+    if not scripts:
+        raise RuntimeError("Generate the writers' room drafts first.")
+
+    prompt = f"""
+APPROVED TREATMENT:
+{json.dumps(treatment, ensure_ascii=False, indent=2)}
+
+RAW WRITERS' ROOM SCRIPTS:
+{json.dumps(scripts, ensure_ascii=False, indent=2)}
+
+BLIND JURY SCORECARDS:
+{json.dumps(room.get("scorecards", {}), ensure_ascii=False, indent=2)}
+
+Build the final master script using the strongest material across ALL usable drafts.
+The source labels in elements_taken_from_each must be gemini, claude and openrouter.
+"""
+
+    result = None
+    errors = []
+
+    # The final editor gets multiple chances across the room too.
+    for name, call in [
+        ("gemini", lambda: _call_gemini_only(
+            MASTER_SCRIPT_SYSTEM, prompt, 0.22, section="script"
+        )),
+        ("openrouter", lambda: _call_qwen_json(
+            MASTER_SCRIPT_SYSTEM, prompt, 0.22, section="script"
+        )),
+        ("claude", lambda: _call_claude_json(
+            MASTER_SCRIPT_SYSTEM, prompt, 0.22, section="script"
+        ) if _anthropic_key() else None),
+    ]:
+        try:
+            candidate = call()
+            if (
+                isinstance(candidate, dict)
+                and isinstance(candidate.get("final_script"), dict)
+            ):
+                result = candidate
+                break
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+
+    if not result:
+        raise RuntimeError(
+            "The master-editor pass could not finish. " + " | ".join(errors)
+        )
+
+    final_script = result["final_script"]
+    room["status"] = "master_ready"
+    room["editorial_blueprint"] = result.get("editorial_blueprint", {})
+    room["final_script"] = final_script
+
+    save_json(project_id, "writer_room_json", room)
+    save_json(project_id, "script_json", final_script, "script_ready")
+    return room
+
+
+def draft_script(project_id):
+    """
+    Compatibility wrapper for older calls. The visible UI uses the writers'
+    room in two stages, but existing integrations can still request a complete
+    script in one function call.
+    """
+    generate_writer_room(project_id)
+    room = synthesize_writer_room(project_id)
+    return room.get("final_script") or {}
 
 
 def critique_script(project_id, target_score=95, max_rewrite_rounds=2):
