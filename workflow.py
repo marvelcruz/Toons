@@ -689,6 +689,15 @@ runtime. There is no universal ideal YouTube length, so use exactly the length n
 without filler.
 
 Research-backed story principles to apply:
+- Treat the user's Bible reference as the PRIMARY STARTING SCOPE, never as the maximum research boundary.
+- Use grounded Bible research to find additional canonical passages that materially clarify the story:
+  parallel Gospel accounts, explicit cross-references, Old Testament background, prophecies explicitly
+  identified as fulfilled in the New Testament, apostolic interpretation, covenant/background passages,
+  and later passages that explain the significance of the event.
+- Distinguish direct narrative evidence from explicit New Testament fulfillment/cross-reference,
+  historical background, and traditional/theological connections. Do not present disputed typology
+  as if it were an uncontested textual fact.
+- Prefer Scripture itself and reliable cross-reference material over unsourced devotional claims.
 - The title/thumbnail promise and the opening must match. The first 30 seconds must immediately confirm
   the viewer made the right click.
 - Create a clear central dramatic question, then sustain curiosity, suspense or anticipation through
@@ -871,9 +880,24 @@ def develop_treatment(project_id):
 
     prompt = f"""
 STORY: {p['story_name']}
-BIBLE REFERENCE: {p['bible_reference']}
+USER-SUPPLIED PRIMARY BIBLE REFERENCE: {p['bible_reference']}
 TARGET RUNTIME: {target_minutes:g} minutes ({target_seconds} seconds)
 TARGET STORY BEATS: approximately {target_beats}, adjusted naturally for the material
+
+SCRIPTURE RESEARCH REQUIREMENT:
+Research beyond the supplied reference before shaping the story.
+The supplied reference is authoritative starting scope, not a restriction.
+
+Find additional relevant canonical passages and classify each one as one of:
+- parallel_narrative
+- explicit_nt_fulfillment_or_cross_reference
+- old_testament_background
+- apostolic_interpretation
+- theological_context
+- traditional_connection_needing_caution
+
+For each added passage, explain briefly why it is relevant and whether it should actually influence
+the narration. Do not pad the list with weak connections. Quality matters more than quantity.
 
 CHANNEL PERFORMANCE LEARNING:
 {json.dumps(channel_learning, indent=2)}
@@ -899,6 +923,15 @@ Return:
     "question_or_tension_opened": ""
   }},
   "scriptural_anchor": [],
+  "researched_scripture_references": [
+    {
+      "reference": "",
+      "category": "",
+      "relevance": "",
+      "use_in_story": "",
+      "confidence": "high|medium|caution"
+    }
+  ],
   "historical_context": [],
   "cinematic_interpretations": [],
   "emotional_arc": "",
@@ -1000,9 +1033,24 @@ def critique_script(project_id, target_score=95, max_rewrite_rounds=2):
     attempts = []
 
     for round_index in range(max_rewrite_rounds + 1):
+        treatment = load_json(p, "treatment_json", {})
+        accuracy_context = {
+            "primary_reference": p.get("bible_reference"),
+            "scriptural_anchor": treatment.get("scriptural_anchor", []),
+            "researched_scripture_references": treatment.get(
+                "researched_scripture_references",
+                [],
+            ),
+        }
+
         review = call_json(
             CRITIQUE_SYSTEM,
-            json.dumps(best_script, indent=2),
+            (
+                "SCRIPTURAL ACCURACY CONTEXT:\n"
+                + json.dumps(accuracy_context, indent=2)
+                + "\n\nSCRIPT TO REVIEW:\n"
+                + json.dumps(best_script, indent=2)
+            ),
             0.15,
             section="retention",
         )
