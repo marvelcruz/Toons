@@ -27,6 +27,7 @@ from db import (
     signed_asset_url,
     save_episode_metrics,
     list_episode_metrics,
+    channel_performance_learning,
     ai_usage_today,
     using_supabase,
 )
@@ -1873,6 +1874,50 @@ with page_root.container():
                     "Avg. viewed",
                     f"{latest_metrics.get('average_percentage_viewed') or 0:.1f}%",
                 )
+
+            st.divider()
+            st.markdown("## What ToonScripture is learning")
+            learning = channel_performance_learning()
+
+            episode_count = int(learning.get("episode_count", 0) or 0)
+            confidence = learning.get("confidence") or "no_data"
+
+            if episode_count == 0:
+                st.caption(
+                    "No channel lessons yet. Save performance after publishing episodes "
+                    "and future treatments/scripts will begin using the evidence."
+                )
+            else:
+                st.write(
+                    f"**{episode_count} published episode"
+                    + ("s" if episode_count != 1 else "")
+                    + f" in the learning set · confidence: {confidence}**"
+                )
+
+                if confidence == "early":
+                    st.caption(
+                        "The sample is still small, so ToonScripture will treat these as observations, "
+                        "not rules."
+                    )
+                elif confidence == "emerging":
+                    st.caption(
+                        "Patterns are starting to form, but they are still treated as hypotheses."
+                    )
+                else:
+                    st.caption(
+                        "There is enough history for ToonScripture to use repeated patterns more deliberately."
+                    )
+
+                for lesson in learning.get("lessons", []):
+                    st.write("•", lesson)
+
+                notes = learning.get("notes", [])
+                if notes:
+                    st.markdown("**Your saved observations**")
+                    for note in notes:
+                        st.write(
+                            f"• {note.get('story_name')}: {note.get('note')}"
+                        )
 
             if package:
                 st.divider()
