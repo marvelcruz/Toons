@@ -973,6 +973,125 @@ def save_reference_asset(
     return payload
 
 
+def add_reference_image(
+    project_id,
+    reference_type,
+    name,
+    file_bytes,
+    filename,
+    content_type="application/octet-stream",
+):
+    """
+    Add another approved image to an existing Visual Bible subject without
+    replacing its primary reference. If no primary exists yet, this becomes it.
+    """
+    if not using_supabase():
+        raise RuntimeError("Reference uploads require the cloud database.")
+
+    client = _client()
+
+    existing_result = (
+        client.table("references_library")
+        .select("*")
+        .eq("project_id", project_id)
+        .eq("reference_type", reference_type)
+        .eq("name", name)
+        .limit(1)
+        .execute()
+    )
+    existing = existing_result.data[0] if existing_result.data else None
+
+    ext = ""
+    if "." in filename:
+        ext = "." + filename.rsplit(".", 1)[1].lower()
+
+    path = (
+        f"{_slug(project_id)}/"
+        f"{_slug(reference_type)}/"
+        f"{_slug(name)}-{uuid.uuid4().hex[:10]}{ext}"
+    )
+
+    (
+        client.storage
+        .from_("toonscripture-assets")
+        .upload(
+            path=path,
+            file=file_bytes,
+            file_options={
+                "content-type": content_type,
+                "upsert": "false",
+            },
+        )
+    )
+
+    if existing:
+        metadata = existing.get("metadata_json") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        image_paths = metadata.get("reference_images") or []
+        if not isinstance(image_paths, list):
+            image_paths = []
+
+        primary_path = existing.get("image_path")
+        if primary_path and primary_path not in image_paths:
+            image_paths.insert(0, primary_path)
+
+        if path not in image_paths:
+            image_paths.append(path)
+
+        metadata["reference_images"] = image_paths
+        metadata["last_added_filename"] = filename
+
+        (
+            client.table("references_library")
+            .update({"metadata_json": metadata})
+            .eq("id", existing["id"])
+            .execute()
+        )
+
+        existing["metadata_json"] = metadata
+        return existing
+
+    payload = {
+        "project_id": project_id,
+        "reference_type": reference_type,
+        "name": name,
+        "status": "approved",
+        "image_path": path,
+        "metadata_json": {
+            "original_filename": filename,
+            "content_type": content_type,
+            "reference_images": [path],
+        },
+    }
+
+    result = client.table("references_library").insert(payload).execute()
+    return result.data[0] if result.data else payload
+
+
+def reference_image_paths(reference):
+    """Return primary + supplementary reference image paths in display order."""
+    if not reference:
+        return []
+
+    paths = []
+    primary = reference.get("image_path")
+    if primary:
+        paths.append(primary)
+
+    metadata = reference.get("metadata_json") or {}
+    if isinstance(metadata, dict):
+        extras = metadata.get("reference_images") or []
+        if isinstance(extras, list):
+            for path in extras:
+                if path and path not in paths:
+                    paths.append(path)
+
+    return paths
+
+
+
 def get_reference_asset(project_id, reference_type, name):
     if not using_supabase():
         return None
