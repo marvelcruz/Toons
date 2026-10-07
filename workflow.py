@@ -142,17 +142,49 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
 
     import requests
 
-    # Use named free models instead of the random free router. This keeps
-    # structured JSON behavior predictable and avoids empty responses from
-    # incompatible routed models.
-    models = [
-        "google/gemma-4-31b-it-20260402:free",
-        "google/gemma-4-26b-a4b-it:free",
+    # Avoid Google-hosted free endpoints here because their shared pool can
+    # rate-limit independently of the user's OpenRouter key. Try several
+    # independent free providers instead.
+    model_options = [
+        {
+            "model": "nvidia/nemotron-3-super-120b-a12b:free",
+            "structured": True,
+        },
+        {
+            "model": "minimax/minimax-m3:free",
+            "structured": False,
+        },
+        {
+            "model": "tencent/hy3:free",
+            "structured": False,
+        },
+        {
+            "model": "openrouter/free",
+            "structured": True,
+        },
     ]
 
     last_error = None
 
-    for model in models:
+    for option in model_options:
+        model = option["model"]
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": user_prompt + "\n\nReturn valid JSON only. Do not wrap it in markdown.",
+                },
+            ],
+            "temperature": temperature,
+            "max_tokens": 16384,
+        }
+
+        if option["structured"]:
+            payload["response_format"] = {"type": "json_object"}
+
         try:
             response = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -162,19 +194,7 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
                     "HTTP-Referer": "https://toonscripture.onrender.com",
                     "X-Title": "ToonScripture OS",
                 },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": user_prompt + "\n\nReturn valid JSON only.",
-                        },
-                    ],
-                    "temperature": temperature,
-                    "max_tokens": 16384,
-                    "response_format": {"type": "json_object"},
-                },
+                json=payload,
                 timeout=180,
             )
 
@@ -188,7 +208,7 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
 
             if not response.ok:
                 last_error = RuntimeError(
-                    f"OpenRouter returned HTTP {response.status_code}: "
+                    f"{model} returned HTTP {response.status_code}: "
                     f"{response.text[:500]}"
                 )
                 continue
@@ -203,6 +223,7 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
 
             message = choices[0].get("message") or {}
             content = message.get("content", "")
+
             if isinstance(content, list):
                 content = "".join(
                     str(part.get("text") or "")
@@ -211,13 +232,30 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
                 )
 
             text = str(content or "").strip()
+
+            # Some reasoning-capable free models can return the final JSON in
+            # a reasoning/output field while leaving content empty.
+            if not text:
+                for field in ("output_text", "reasoning", "reasoning_content"):
+                    value = message.get(field)
+                    if value:
+                        text = str(value).strip()
+                        if text:
+                            break
+
             if not text:
                 last_error = RuntimeError(
                     f"{model} returned an empty response."
                 )
                 continue
 
-            return _extract_json(text)
+            try:
+                return _extract_json(text)
+            except Exception as exc:
+                last_error = RuntimeError(
+                    f"{model} returned text but not valid JSON: {exc}"
+                )
+                continue
 
         except requests.Timeout as exc:
             last_error = exc
