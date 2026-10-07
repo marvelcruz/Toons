@@ -425,12 +425,12 @@ with st.sidebar:
             if _anthropic_key():
                 st.success("Claude creative writing is connected", icon="✅")
                 st.caption(
-                    "Claude will handle script and retention writing in Auto mode."
+                    "Claude can join Gemini and OpenRouter in the creative writers' room."
                 )
             else:
                 st.caption(
-                    "Claude is optional. Without ANTHROPIC_API_KEY, the existing "
-                    "Gemini + OpenRouter workflow stays active."
+                    "Claude is optional. Gemini and OpenRouter Free AI already "
+                    "collaborate on scripts and retention without it."
                 )
 
             if "_ai_usage_cache" not in st.session_state:
