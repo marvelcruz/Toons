@@ -145,9 +145,45 @@ def _extract_json(text):
         raise
 
 
-def _openrouter_key():
-    return str(os.getenv("OPENROUTER_API_KEY", "") or "").strip()
+def _openrouter_keys():
+    keys = []
 
+    def add(name, value):
+        value = str(value or "").strip()
+        if value and all(item["value"] != value for item in keys):
+            keys.append({"name": name, "value": value})
+
+    add("OPENROUTER_API_KEY", os.getenv("OPENROUTER_API_KEY", ""))
+
+    for letter in "ABCDEFGHI":
+        name = f"OPENROUTER_API_KEY_{letter}"
+        add(name, os.getenv(name, ""))
+
+    try:
+        import streamlit as st
+        if "OPENROUTER_API_KEY" in st.secrets:
+            add("OPENROUTER_API_KEY", st.secrets["OPENROUTER_API_KEY"])
+        for letter in "ABCDEFGHI":
+            name = f"OPENROUTER_API_KEY_{letter}"
+            if name in st.secrets:
+                add(name, st.secrets[name])
+    except Exception:
+        pass
+
+    return keys
+
+
+def _openrouter_key():
+    keys = _openrouter_keys()
+    return keys[0]["value"] if keys else ""
+
+
+def _openrouter_key_count():
+    return len(_openrouter_keys())
+
+
+def _openrouter_key_names():
+    return [item["name"] for item in _openrouter_keys()]
 
 def _anthropic_key():
     key = str(os.getenv("ANTHROPIC_API_KEY", "") or "").strip()
@@ -285,8 +321,8 @@ def _call_claude_json(system_prompt, user_prompt, temperature=0.3, section="gene
 
 
 def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="general"):
-    key = _openrouter_key()
-    if not key:
+    key_entries = _openrouter_keys()
+    if not key_entries:
         raise RuntimeError("OpenRouter is not connected.")
 
     import requests
@@ -294,173 +330,190 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
     model = "openrouter/free"
     last_error = None
 
-    # Let OpenRouter choose among its full free-model pool. Its free router
-    # filters for request capabilities such as structured outputs. We retry
-    # once because a free upstream provider can be temporarily busy or
-    # rate-limited and a second request may be routed elsewhere.
-    for attempt in range(2):
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": (
-                        user_prompt
-                        + "\n\nReturn valid JSON only. Do not wrap it in markdown."
-                    ),
-                },
-            ],
-            "temperature": temperature,
-            "max_tokens": 16384,
-            "response_format": {"type": "json_object"},
-        }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    user_prompt
+                    + "\n\nReturn valid JSON only. Do not wrap it in markdown."
+                ),
+            },
+        ],
+        "temperature": temperature,
+        "max_tokens": 16384,
+        "response_format": {"type": "json_object"},
+    }
 
-        try:
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://toonscripture.onrender.com",
-                    "X-Title": "ToonScripture OS",
-                },
-                json=payload,
-                timeout=180,
-            )
+    # One OpenRouter collaborator, backed by a pool of authorized keys.
+    # A key is tried at most twice for transient upstream errors; if it cannot
+    # serve the request, the next configured key gets a turn.
+    for key_entry in key_entries:
+        key = key_entry["value"]
+        key_name = key_entry["name"]
 
-            if not response.ok:
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://toonscripture.onrender.com",
+                        "X-Title": "ToonScripture OS",
+                    },
+                    json=payload,
+                    timeout=180,
+                )
+
+                if not response.ok:
+                    record_ai_usage(
+                        project_name=key_name,
+                        section_name=section,
+                        model_name=model,
+                        outcome="error",
+                        http_status=response.status_code,
+                    )
+                    last_error = RuntimeError(
+                        f"{key_name} returned HTTP {response.status_code}: "
+                        f"{response.text[:500]}"
+                    )
+
+                    # Retry the same key once for transient provider trouble.
+                    if response.status_code in (502, 503, 504) and attempt == 0:
+                        time.sleep(2)
+                        continue
+
+                    # Quota/access/rate failures move to the next configured key.
+                    break
+
+                data = response.json()
+                routed_model = str(data.get("model") or model)
+                choices = data.get("choices") or []
+
+                if not choices:
+                    record_ai_usage(
+                        project_name=key_name,
+                        section_name=section,
+                        model_name=routed_model,
+                        outcome="empty",
+                        http_status=response.status_code,
+                    )
+                    last_error = RuntimeError(
+                        f"{key_name} routed to {routed_model}, but no generated text was returned."
+                    )
+                    if attempt == 0:
+                        time.sleep(1)
+                        continue
+                    break
+
+                message = choices[0].get("message") or {}
+                content = message.get("content", "")
+                if isinstance(content, list):
+                    content = "".join(
+                        str(part.get("text") or "")
+                        for part in content
+                        if isinstance(part, dict)
+                    )
+
+                text = str(content or "").strip()
+
+                if not text:
+                    for field in ("output_text", "reasoning_content"):
+                        value = message.get(field)
+                        if value:
+                            text = str(value).strip()
+                            if text:
+                                break
+
+                if not text:
+                    record_ai_usage(
+                        project_name=key_name,
+                        section_name=section,
+                        model_name=routed_model,
+                        outcome="empty",
+                        http_status=response.status_code,
+                    )
+                    last_error = RuntimeError(
+                        f"{key_name} routed to {routed_model}, but the response was empty."
+                    )
+                    if attempt == 0:
+                        time.sleep(1)
+                        continue
+                    break
+
+                try:
+                    parsed = _extract_json(text)
+                except Exception as exc:
+                    record_ai_usage(
+                        project_name=key_name,
+                        section_name=section,
+                        model_name=routed_model,
+                        outcome="invalid_json",
+                        http_status=response.status_code,
+                    )
+                    last_error = RuntimeError(
+                        f"{key_name} routed to {routed_model}, but it returned invalid JSON: {exc}"
+                    )
+                    if attempt == 0:
+                        time.sleep(1)
+                        continue
+                    break
+
+                record_ai_usage(
+                    project_name=key_name,
+                    section_name=section,
+                    model_name=routed_model,
+                    outcome="success",
+                    http_status=response.status_code,
+                )
+                # Keep a generic aggregate row for the existing provider-status UI.
                 record_ai_usage(
                     project_name="OPENROUTER_FREE_AI",
+                    section_name=section,
+                    model_name=routed_model,
+                    outcome="success",
+                    http_status=response.status_code,
+                )
+                print(
+                    f"[ToonScripture] {section}: OpenRouter completed via "
+                    f"{routed_model} using {key_name}",
+                    flush=True,
+                )
+                return parsed
+
+            except requests.Timeout as exc:
+                last_error = exc
+                record_ai_usage(
+                    project_name=key_name,
                     section_name=section,
                     model_name=model,
-                    outcome="error",
-                    http_status=response.status_code,
-                )
-                last_error = RuntimeError(
-                    f"OpenRouter free router returned HTTP {response.status_code}: "
-                    f"{response.text[:500]}"
-                )
-                if response.status_code in (429, 502, 503, 504) and attempt == 0:
-                    time.sleep(2)
-                    continue
-                break
-
-            data = response.json()
-            routed_model = str(data.get("model") or model)
-            choices = data.get("choices") or []
-
-            if not choices:
-                record_ai_usage(
-                    project_name="OPENROUTER_FREE_AI",
-                    section_name=section,
-                    model_name=routed_model,
-                    outcome="empty",
-                    http_status=response.status_code,
-                )
-                last_error = RuntimeError(
-                    f"OpenRouter routed to {routed_model}, but no generated text was returned."
+                    outcome="timeout",
+                    http_status=None,
                 )
                 if attempt == 0:
-                    time.sleep(1)
                     continue
                 break
 
-            message = choices[0].get("message") or {}
-            content = message.get("content", "")
-            if isinstance(content, list):
-                content = "".join(
-                    str(part.get("text") or "")
-                    for part in content
-                    if isinstance(part, dict)
-                )
-
-            text = str(content or "").strip()
-
-            if not text:
-                for field in ("output_text", "reasoning_content"):
-                    value = message.get(field)
-                    if value:
-                        text = str(value).strip()
-                        if text:
-                            break
-
-            if not text:
+            except requests.RequestException as exc:
+                last_error = exc
                 record_ai_usage(
-                    project_name="OPENROUTER_FREE_AI",
+                    project_name=key_name,
                     section_name=section,
-                    model_name=routed_model,
-                    outcome="empty",
-                    http_status=response.status_code,
-                )
-                last_error = RuntimeError(
-                    f"OpenRouter routed to {routed_model}, but the response was empty."
+                    model_name=model,
+                    outcome="network_error",
+                    http_status=None,
                 )
                 if attempt == 0:
-                    time.sleep(1)
                     continue
                 break
-
-            try:
-                parsed = _extract_json(text)
-            except Exception as exc:
-                record_ai_usage(
-                    project_name="OPENROUTER_FREE_AI",
-                    section_name=section,
-                    model_name=routed_model,
-                    outcome="invalid_json",
-                    http_status=response.status_code,
-                )
-                last_error = RuntimeError(
-                    f"OpenRouter routed to {routed_model}, but it returned invalid JSON: {exc}"
-                )
-                if attempt == 0:
-                    time.sleep(1)
-                    continue
-                break
-
-            record_ai_usage(
-                project_name="OPENROUTER_FREE_AI",
-                section_name=section,
-                model_name=routed_model,
-                outcome="success",
-                http_status=response.status_code,
-            )
-            print(
-                f"[ToonScripture] {section}: OpenRouter free router completed via {routed_model}",
-                flush=True,
-            )
-            return parsed
-
-        except requests.Timeout as exc:
-            last_error = exc
-            record_ai_usage(
-                project_name="OPENROUTER_FREE_AI",
-                section_name=section,
-                model_name=model,
-                outcome="timeout",
-                http_status=None,
-            )
-            if attempt == 0:
-                continue
-
-        except requests.RequestException as exc:
-            last_error = exc
-            record_ai_usage(
-                project_name="OPENROUTER_FREE_AI",
-                section_name=section,
-                model_name=model,
-                outcome="network_error",
-                http_status=None,
-            )
-            if attempt == 0:
-                continue
 
     raise RuntimeError(
-        "OpenRouter Free AI could not complete this request after trying the free router. "
+        "OpenRouter Free AI could not complete this request with any configured key. "
         f"Last error: {last_error}"
     )
-
 
 def _synthesize_gemini_qwen(
     system_prompt,
