@@ -197,6 +197,12 @@ create index if not exists idx_catalog_story_people_person
 create index if not exists idx_catalog_episodes_story
   on public.catalog_episodes(story_id, episode_number);
 
+create index if not exists idx_project_catalog_links_story
+  on public.project_catalog_links(catalog_story_id);
+
+create index if not exists idx_project_catalog_links_episode
+  on public.project_catalog_links(catalog_episode_id);
+
 alter table public.catalog_stories enable row level security;
 alter table public.catalog_story_people enable row level security;
 alter table public.catalog_episodes enable row level security;
