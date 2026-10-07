@@ -11,6 +11,7 @@ create table if not exists public.projects (
   format text default 'long_form',
   status text default 'idea',
   treatment_json jsonb,
+  writer_room_json jsonb,
   script_json jsonb,
   critique_json jsonb,
   character_bible_json jsonb,
@@ -264,3 +265,7 @@ with check (
     where admin_users.user_id = (select auth.uid())
   )
 );
+
+
+alter table public.projects
+  add column if not exists writer_room_json jsonb;
