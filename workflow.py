@@ -142,62 +142,106 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
 
     import requests
 
-    model = "openrouter/free"
-    response = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://toonscripture.onrender.com",
-            "X-Title": "ToonScripture OS",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": user_prompt + "\n\nReturn valid JSON only.",
+    # Use named free models instead of the random free router. This keeps
+    # structured JSON behavior predictable and avoids empty responses from
+    # incompatible routed models.
+    models = [
+        "google/gemma-4-31b-it-20260402:free",
+        "google/gemma-4-26b-a4b-it:free",
+    ]
+
+    last_error = None
+
+    for model in models:
+        try:
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://toonscripture.onrender.com",
+                    "X-Title": "ToonScripture OS",
                 },
-            ],
-            "temperature": temperature,
-            "response_format": {"type": "json_object"},
-        },
-        timeout=180,
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": user_prompt + "\n\nReturn valid JSON only.",
+                        },
+                    ],
+                    "temperature": temperature,
+                    "max_tokens": 16384,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=180,
+            )
+
+            record_ai_usage(
+                project_name="OPENROUTER_FREE_AI",
+                section_name=section,
+                model_name=model,
+                outcome="success" if response.ok else "error",
+                http_status=response.status_code,
+            )
+
+            if not response.ok:
+                last_error = RuntimeError(
+                    f"OpenRouter returned HTTP {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
+                continue
+
+            data = response.json()
+            choices = data.get("choices") or []
+            if not choices:
+                last_error = RuntimeError(
+                    f"{model} returned no generated text."
+                )
+                continue
+
+            message = choices[0].get("message") or {}
+            content = message.get("content", "")
+            if isinstance(content, list):
+                content = "".join(
+                    str(part.get("text") or "")
+                    for part in content
+                    if isinstance(part, dict)
+                )
+
+            text = str(content or "").strip()
+            if not text:
+                last_error = RuntimeError(
+                    f"{model} returned an empty response."
+                )
+                continue
+
+            return _extract_json(text)
+
+        except requests.Timeout as exc:
+            last_error = exc
+            record_ai_usage(
+                project_name="OPENROUTER_FREE_AI",
+                section_name=section,
+                model_name=model,
+                outcome="timeout",
+                http_status=None,
+            )
+        except requests.RequestException as exc:
+            last_error = exc
+            record_ai_usage(
+                project_name="OPENROUTER_FREE_AI",
+                section_name=section,
+                model_name=model,
+                outcome="network_error",
+                http_status=None,
+            )
+
+    raise RuntimeError(
+        "OpenRouter Free AI could not complete this request. "
+        f"Last error: {last_error}"
     )
-
-    record_ai_usage(
-        project_name="OPENROUTER_QWEN_FREE",
-        section_name=section,
-        model_name=model,
-        outcome="success" if response.ok else "error",
-        http_status=response.status_code,
-    )
-
-    if not response.ok:
-        raise RuntimeError(
-            f"OpenRouter Free Models returned HTTP {response.status_code}: "
-            f"{response.text[:800]}"
-        )
-
-    data = response.json()
-    choices = data.get("choices") or []
-    if not choices:
-        raise RuntimeError("OpenRouter Free Models returned no generated text.")
-
-    content = choices[0].get("message", {}).get("content", "")
-    if isinstance(content, list):
-        content = "".join(
-            str(part.get("text") or "")
-            for part in content
-            if isinstance(part, dict)
-        )
-
-    text = str(content or "").strip()
-    if not text:
-        raise RuntimeError("OpenRouter Free Models returned an empty response.")
-
-    return _extract_json(text)
 
 
 def _synthesize_gemini_qwen(
