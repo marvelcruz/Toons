@@ -983,6 +983,44 @@ with page_root.container():
                         if score is not None:
                             st.metric("Retention score", f"{score}/100")
 
+                        target = int(critique.get("quality_target", 95) or 95)
+                        passed = bool(
+                            critique.get(
+                                "quality_gate_passed",
+                                int(score or 0) >= target,
+                            )
+                        )
+
+                        attempts = critique.get("review_attempts", []) or []
+                        rewrite_rounds = int(
+                            critique.get("automatic_rewrite_rounds", 0) or 0
+                        )
+
+                        if passed:
+                            st.success(
+                                f"Retention quality gate passed: {int(score)}/100."
+                            )
+                        else:
+                            st.warning(
+                                f"Retention quality gate not passed yet. "
+                                f"ToonScripture requires at least {target}/100 before Visual Bible."
+                            )
+
+                        if attempts:
+                            attempt_text = " → ".join(
+                                str(item.get("score", "?"))
+                                for item in attempts
+                            )
+                            st.caption(
+                                f"Review path: {attempt_text}"
+                                + (
+                                    f" · {rewrite_rounds} automatic rewrite round"
+                                    + ("s" if rewrite_rounds != 1 else "")
+                                    if rewrite_rounds
+                                    else ""
+                                )
+                            )
+
                         left, right = st.columns(2)
 
                         with left:
@@ -1005,18 +1043,31 @@ with page_root.container():
                                 st.write("•", item)
 
                         st.divider()
-                        st.success("Story and script preparation is complete.")
-                        st.caption(
-                            "Next, lock the appearance of characters, locations, groups and props."
-                        )
-                        st.button(
-                            "Next → Visual Bible",
-                            type="primary",
-                            use_container_width=True,
-                            key="next_to_visual_bible",
-                            on_click=go_to_main_section,
-                            args=("🎨 Visual Bible",),
-                        )
+
+                        if passed:
+                            st.success("Story and script preparation is complete.")
+                            st.caption(
+                                "Next, lock the appearance of characters, locations, groups and props."
+                            )
+                            st.button(
+                                "Next → Visual Bible",
+                                type="primary",
+                                use_container_width=True,
+                                key="next_to_visual_bible",
+                                on_click=go_to_main_section,
+                                args=("🎨 Visual Bible",),
+                            )
+                        else:
+                            st.caption(
+                                "The script has been improved automatically, but the honest critic "
+                                "still scored it below 95. Run the review again to continue improving it."
+                            )
+                            st.button(
+                                "Improve again toward 95+",
+                                type="primary",
+                                use_container_width=True,
+                                key="improve_again_retention",
+                            )
 
 
     # =========================================================
