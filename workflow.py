@@ -690,7 +690,33 @@ Avoid preachy filler. Use sceneable language. Return valid JSON only.
 CRITIQUE_SYSTEM = """
 You are a strict YouTube retention editor.
 Review the script for hook strength, pacing, clarity, emotional escalation, repetition and payoff.
+Score honestly. Do not inflate the score to satisfy a target.
+A score of 95+ should mean the script is genuinely exceptional for retention while remaining accurate,
+clear, emotionally coherent and suitable for the requested runtime.
 Return valid JSON only with score_100, strengths, problems, recommended_cuts, recommended_additions.
+"""
+
+RETENTION_REWRITE_SYSTEM = """
+You are ToonScripture's senior long-form YouTube script doctor.
+Rewrite the supplied Bible-story script to fix every retention problem identified by the critic.
+
+Requirements:
+- Preserve scriptural accuracy and the approved story arc.
+- Preserve the requested runtime rather than simply making the script shorter.
+- Strengthen the opening hook, pacing, emotional escalation, specificity, transitions and payoff.
+- Remove repetition, list-like narration and generic summary language.
+- Use sceneable, cinematic language.
+- Keep chronology clear.
+- Do not add unsupported theological or historical claims.
+- Return the COMPLETE revised script, not notes.
+- Return valid JSON only with exactly:
+{
+  "hook": "",
+  "sections": [
+    {"name":"", "purpose":"", "narration":"", "dialogue":[]}
+  ],
+  "closing": ""
+}
 """
 
 SCENE_SYSTEM = """
@@ -784,12 +810,89 @@ Return:
     return out
 
 
-def critique_script(project_id):
+def critique_script(project_id, target_score=95, max_rewrite_rounds=2):
+    """
+    Review the script and enforce ToonScripture's retention quality gate.
+
+    If the honest review is below target_score, automatically rewrite the
+    complete script from the critique and review it again. We cap automatic
+    rewrites so one click cannot create an uncontrolled chain of API calls.
+    The best script/review found is saved even if the target is not reached.
+    """
     p = get_project(project_id)
     script = load_json(p, "script_json", {})
-    out = call_json(CRITIQUE_SYSTEM, json.dumps(script, indent=2), 0.15, section="retention")
-    save_json(project_id, "critique_json", out)
-    return out
+
+    if not script:
+        raise RuntimeError("Write the script before running the retention review.")
+
+    best_script = script
+    best_review = None
+    best_score = -1
+    attempts = []
+
+    for round_index in range(max_rewrite_rounds + 1):
+        review = call_json(
+            CRITIQUE_SYSTEM,
+            json.dumps(best_script, indent=2),
+            0.15,
+            section="retention",
+        )
+
+        try:
+            score = int(round(float(review.get("score_100", 0) or 0)))
+        except Exception:
+            score = 0
+
+        attempts.append({
+            "round": round_index + 1,
+            "score": score,
+        })
+
+        if score > best_score:
+            best_score = score
+            best_review = review
+
+        if score >= target_score:
+            break
+
+        if round_index >= max_rewrite_rounds:
+            break
+
+        rewrite_prompt = f"""
+TARGET RUNTIME: {p['target_minutes']} minutes
+QUALITY TARGET: {target_score}/100 or better
+
+CURRENT SCRIPT:
+{json.dumps(best_script, indent=2)}
+
+RETENTION REVIEW:
+{json.dumps(review, indent=2)}
+
+Rewrite the complete script so the specific problems above are fixed.
+Do not game the score and do not merely mention the fixes. Actually rewrite the narration.
+"""
+
+        revised = call_json(
+            RETENTION_REWRITE_SYSTEM,
+            rewrite_prompt,
+            0.25,
+            section="script",
+        )
+
+        if revised:
+            best_script = revised
+            save_json(project_id, "script_json", best_script, "script_ready")
+
+    if best_review is None:
+        raise RuntimeError("The retention review returned no usable result.")
+
+    best_review["quality_target"] = target_score
+    best_review["quality_gate_passed"] = best_score >= target_score
+    best_review["review_attempts"] = attempts
+    best_review["automatic_rewrite_rounds"] = max(0, len(attempts) - 1)
+
+    save_json(project_id, "critique_json", best_review)
+    return best_review
 
 
 def _fit_flow_durations(raw_durations, target_seconds):
