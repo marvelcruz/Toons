@@ -5,11 +5,18 @@ import time
 
 from db import (
     get_project,
+    get_catalog_person,
+    list_catalog_people,
     load_json,
     save_json,
     record_ai_usage,
     list_project_assets,
     channel_performance_learning,
+)
+from story_catalog import (
+    list_catalog_stories,
+    list_unstructured_people,
+    save_story_structure,
 )
 
 
@@ -140,6 +147,141 @@ def _extract_json(text):
 
 def _openrouter_key():
     return str(os.getenv("OPENROUTER_API_KEY", "") or "").strip()
+
+
+def _anthropic_key():
+    key = str(os.getenv("ANTHROPIC_API_KEY", "") or "").strip()
+    if key:
+        return key
+
+    try:
+        import streamlit as st
+        if "ANTHROPIC_API_KEY" in st.secrets:
+            return str(st.secrets["ANTHROPIC_API_KEY"] or "").strip()
+    except Exception:
+        pass
+
+    return ""
+
+
+def _creative_provider():
+    value = str(
+        os.getenv("TOONSCRIPTURE_CREATIVE_PROVIDER", "auto") or "auto"
+    ).strip().lower()
+    return value if value in {"auto", "claude", "existing"} else "auto"
+
+
+def _call_claude_json(system_prompt, user_prompt, temperature=0.3, section="general"):
+    key = _anthropic_key()
+    if not key:
+        raise RuntimeError("Claude is not connected.")
+
+    import requests
+
+    model = str(
+        os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5") or "claude-sonnet-4-5"
+    ).strip()
+
+    payload = {
+        "model": model,
+        "max_tokens": 16000,
+        "temperature": temperature,
+        "system": system_prompt,
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    user_prompt
+                    + "\n\nReturn valid JSON only. Do not wrap it in markdown."
+                ),
+            }
+        ],
+    }
+
+    try:
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+            timeout=180,
+        )
+    except requests.Timeout as exc:
+        record_ai_usage(
+            project_name="ANTHROPIC_CLAUDE",
+            section_name=section,
+            model_name=model,
+            outcome="timeout",
+            http_status=None,
+        )
+        raise RuntimeError("Claude timed out.") from exc
+    except requests.RequestException as exc:
+        record_ai_usage(
+            project_name="ANTHROPIC_CLAUDE",
+            section_name=section,
+            model_name=model,
+            outcome="network_error",
+            http_status=None,
+        )
+        raise RuntimeError(f"Claude network error: {exc}") from exc
+
+    if not response.ok:
+        record_ai_usage(
+            project_name="ANTHROPIC_CLAUDE",
+            section_name=section,
+            model_name=model,
+            outcome="error",
+            http_status=response.status_code,
+        )
+        raise RuntimeError(
+            f"Claude returned HTTP {response.status_code}: {response.text[:500]}"
+        )
+
+    data = response.json()
+    blocks = data.get("content") or []
+    text = "".join(
+        str(block.get("text") or "")
+        for block in blocks
+        if isinstance(block, dict) and block.get("type") == "text"
+    ).strip()
+
+    if not text:
+        record_ai_usage(
+            project_name="ANTHROPIC_CLAUDE",
+            section_name=section,
+            model_name=model,
+            outcome="empty",
+            http_status=response.status_code,
+        )
+        raise RuntimeError("Claude returned an empty response.")
+
+    try:
+        parsed = _extract_json(text)
+    except Exception as exc:
+        record_ai_usage(
+            project_name="ANTHROPIC_CLAUDE",
+            section_name=section,
+            model_name=model,
+            outcome="invalid_json",
+            http_status=response.status_code,
+        )
+        raise RuntimeError(f"Claude returned invalid JSON: {exc}") from exc
+
+    record_ai_usage(
+        project_name="ANTHROPIC_CLAUDE",
+        section_name=section,
+        model_name=model,
+        outcome="success",
+        http_status=response.status_code,
+    )
+    print(
+        f"[ToonScripture] {section}: Claude completed via {model}",
+        flush=True,
+    )
+    return parsed
 
 
 def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="general"):
@@ -591,6 +733,30 @@ def _call_gemini_only(system_prompt, user_prompt, temperature=0.3, section="gene
 
 
 def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
+    # Claude is an optional creative specialist. The default "auto" mode uses
+    # it only for writing/retention work when ANTHROPIC_API_KEY is available.
+    # With no Claude key, ToonScripture keeps its existing Gemini + OpenRouter
+    # behavior unchanged.
+    if section in {"script", "retention"}:
+        provider = _creative_provider()
+        if provider in {"auto", "claude"} and _anthropic_key():
+            try:
+                return _call_claude_json(
+                    system_prompt,
+                    user_prompt,
+                    temperature=temperature,
+                    section=section,
+                )
+            except Exception as exc:
+                print(
+                    f"[ToonScripture] {section}: Claude failed, falling back: {exc}",
+                    flush=True,
+                )
+                if provider == "claude":
+                    # Explicit Claude mode still falls back so a temporary
+                    # Anthropic outage never blocks production.
+                    pass
+
     gemini_output = None
     qwen_output = None
     errors = []
@@ -679,6 +845,152 @@ def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
         "Neither Gemini nor OpenRouter Free Models could complete this step. "
         + " | ".join(errors)
     )
+
+
+STORY_CATALOG_ARCHITECT_SYSTEM = """
+You are ToonScripture's Story Catalog Architect.
+
+Your job is to decide whether a Bible story should be ONE episode, TWO episodes,
+or THREE episodes. Default to one episode. Never create extra parts merely
+because a person appears across many chapters.
+
+Split only when the biblical material contains genuinely distinct dramatic arcs
+that can each sustain their own hook, conflict, climax and resolution.
+
+Also detect when several catalog people belong to the SAME production story.
+For example, two characters in one tightly connected event should not create
+duplicate videos just because they have separate character records.
+
+Rules:
+- episode_count must be 1, 2 or 3.
+- Prefer 1 unless a split materially improves storytelling.
+- Never split one tightly connected event in half just to manufacture Part 2.
+- Each multipart episode must have a distinct dramatic question and payoff.
+- related_person_ids may ONLY contain IDs supplied in the candidate list.
+- story_key must be a short stable snake_case identifier for the underlying
+  biblical story, not merely the primary character name.
+- Do not invent Bible events or unsupported chronology.
+- Return valid JSON only.
+
+Return exactly:
+{
+  "story_key": "",
+  "story_title": "",
+  "testament": "",
+  "book": "",
+  "bible_references": "",
+  "story_summary": "",
+  "episode_count": 1,
+  "structure_reason": "",
+  "related_person_ids": [],
+  "episodes": [
+    {
+      "episode_number": 1,
+      "episode_title": "",
+      "bible_reference": "",
+      "narrative_scope": "",
+      "hook": "",
+      "conflict": "",
+      "climax": "",
+      "resolution": "",
+      "recommended_runtime_minutes": 8
+    }
+  ]
+}
+"""
+
+
+def analyze_catalog_person_structure(person_id):
+    person = get_catalog_person(person_id)
+    if not person:
+        raise RuntimeError(f"Catalog person {person_id} was not found.")
+
+    all_people = list_catalog_people(limit=5000)
+    same_book = [
+        row
+        for row in all_people
+        if row.get("book") == person.get("book")
+    ]
+
+    # Keep the candidate context focused. The AI is allowed to merge only IDs
+    # from this list, which prevents hallucinated links.
+    candidates = []
+    for row in same_book[:80]:
+        candidates.append(
+            {
+                "id": row.get("id"),
+                "name": row.get("name"),
+                "bible_references": row.get("bible_references"),
+                "story_role": row.get("story_role"),
+            }
+        )
+
+    existing = [
+        {
+            "id": row.get("id"),
+            "story_key": row.get("story_key"),
+            "story_title": row.get("story_title"),
+            "bible_references": row.get("bible_references"),
+            "episode_count": row.get("episode_count"),
+        }
+        for row in list_catalog_stories(limit=1000)
+        if row.get("book") == person.get("book")
+    ]
+
+    prompt = f"""
+PRIMARY CATALOG ENTRY:
+{json.dumps(person, indent=2)}
+
+OTHER CATALOG PEOPLE FROM THE SAME BIBLE BOOK:
+{json.dumps(candidates, indent=2)}
+
+EXISTING STRUCTURED STORIES FROM THIS BOOK:
+{json.dumps(existing, indent=2)}
+
+Determine the correct production-story structure.
+
+Important:
+- Decide 1, 2 or 3 episodes based on narrative substance, not chapter count.
+- If this character belongs to the same underlying story as another supplied
+  catalog person, include that person's ID in related_person_ids.
+- Reuse an existing story_key when the underlying story is clearly already in
+  EXISTING STRUCTURED STORIES.
+- A one-episode story should not be called Part 1.
+"""
+    decision = call_json(
+        STORY_CATALOG_ARCHITECT_SYSTEM,
+        prompt,
+        0.15,
+        section="treatment",
+    )
+    return save_story_structure(person, decision)
+
+
+def analyze_catalog_batch(limit=10):
+    pending = list_unstructured_people(limit=limit)
+    results = []
+    for person in pending:
+        try:
+            saved = analyze_catalog_person_structure(person["id"])
+            results.append(
+                {
+                    "person_id": person["id"],
+                    "person_name": person.get("name"),
+                    "ok": True,
+                    "story": saved.get("story"),
+                    "episodes": saved.get("episodes", []),
+                }
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "person_id": person.get("id"),
+                    "person_name": person.get("name"),
+                    "ok": False,
+                    "error": str(exc),
+                }
+            )
+    return results
 
 
 TREATMENT_SYSTEM = """
