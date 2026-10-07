@@ -942,15 +942,27 @@ with page_root.container():
                             review_error = str(exc)
 
                     if review_error:
-                        if "quota" in review_error.lower() or "429" in review_error:
+                        lower_error = review_error.lower()
+
+                        if "openrouter" in lower_error and "429" in lower_error:
                             st.warning(
-                                "The AI review limit has been reached for the connected Gemini API project. "
-                                "Your script is safe and nothing has been lost. You can retry the retention "
-                                "review later, or continue to the Visual Bible now."
+                                "OpenRouter's free provider pool is temporarily rate-limited. "
+                                "Your script is safe. ToonScripture has already tried several free providers, "
+                                "so retry in a little while or continue to the Visual Bible."
+                            )
+                        elif "api key" in lower_error or "access" in lower_error or "403" in lower_error:
+                            st.warning(
+                                "The assigned Gemini project has a key or access problem. "
+                                "Your script is safe. OpenRouter will still be tried automatically."
+                            )
+                        elif "quota" in lower_error or "429" in lower_error:
+                            st.warning(
+                                "The assigned Gemini project's current quota is exhausted. "
+                                "Your script is safe. OpenRouter will still be tried automatically."
                             )
                         else:
                             st.error(
-                                "The retention review could not be completed right now. "
+                                "Neither Gemini nor OpenRouter produced a usable retention review right now. "
                                 "Your script is saved, so you can retry later."
                             )
 
