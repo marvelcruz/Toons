@@ -686,13 +686,26 @@ st.title(page_names.get(main_section, "Workspace"))
 
 if project:
     done, total = project_progress(project)
+    header_treatment = load_json(project, "treatment_json", {})
+    header_researched_refs = header_treatment.get(
+        "researched_scripture_references",
+        [],
+    ) or []
+    researched_suffix = (
+        f" · +{len(header_researched_refs)} researched Bible references"
+        if header_researched_refs
+        else ""
+    )
+
     st.markdown(
         f"""
         <div class="ts-projectbar">
-            <strong>{project['story_name']}</strong>
+            <strong>{project['story_name']}</strong><br>
             <span class="ts-muted">
+                {project.get('bible_reference') or 'Bible reference not set'}
                 &nbsp;·&nbsp; {project.get('target_minutes', 0)} min
                 &nbsp;·&nbsp; {done}/{total} stages prepared
+                {researched_suffix}
             </span>
         </div>
         """,
@@ -982,7 +995,54 @@ with page_root.container():
                     if treatment.get("story_beats"):
                         st.markdown("### Main story moments")
                         for beat in treatment["story_beats"]:
-                            st.write("•", beat)
+                            if isinstance(beat, dict):
+                                st.write(
+                                    "•",
+                                    beat.get("beat")
+                                    or beat.get("purpose")
+                                    or str(beat),
+                                )
+                            else:
+                                st.write("•", beat)
+
+                    researched_refs = treatment.get(
+                        "researched_scripture_references",
+                        [],
+                    ) or []
+                    if researched_refs:
+                        st.markdown("### Scripture research")
+                        st.caption(
+                            f"Primary scope: {project.get('bible_reference') or 'Not set'} · "
+                            f"{len(researched_refs)} additional relevant passage"
+                            + ("s" if len(researched_refs) != 1 else "")
+                            + " found through research."
+                        )
+
+                        for ref in researched_refs:
+                            if not isinstance(ref, dict):
+                                st.write("•", ref)
+                                continue
+
+                            reference = ref.get("reference") or "Reference"
+                            category = (
+                                str(ref.get("category") or "")
+                                .replace("_", " ")
+                                .strip()
+                                .title()
+                            )
+                            relevance = ref.get("relevance") or ""
+                            confidence = ref.get("confidence") or ""
+
+                            st.markdown(f"**{reference}**")
+                            meta = " · ".join(
+                                value
+                                for value in [category, str(confidence).title()]
+                                if value
+                            )
+                            if meta:
+                                st.caption(meta)
+                            if relevance:
+                                st.write(relevance)
 
                     with st.expander("See full treatment"):
                         if treatment.get("core_story"):
@@ -993,6 +1053,18 @@ with page_root.container():
                             st.markdown("### Scriptural anchors")
                             for item in treatment["scriptural_anchor"]:
                                 st.write("•", item)
+
+                        if treatment.get("researched_scripture_references"):
+                            st.markdown("### Expanded Bible references")
+                            for ref in treatment["researched_scripture_references"]:
+                                if isinstance(ref, dict):
+                                    st.markdown(
+                                        f"**{ref.get('reference') or 'Reference'}**"
+                                    )
+                                    if ref.get("use_in_story"):
+                                        st.write(ref["use_in_story"])
+                                else:
+                                    st.write("•", ref)
 
                         if treatment.get("historical_context"):
                             st.markdown("### Historical context")
