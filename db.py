@@ -526,6 +526,191 @@ def list_episode_metrics(project_id):
     return result.data or []
 
 
+def channel_performance_learning(limit=100):
+    """
+    Build a lightweight channel-learning summary from saved YouTube metrics.
+
+    This is deterministic and uses no AI credits. It deliberately becomes
+    more confident only as more distinct episodes collect performance data.
+    """
+    if not using_supabase():
+        return {
+            "episode_count": 0,
+            "confidence": "no_data",
+            "lessons": [],
+            "episodes": [],
+        }
+
+    metrics = (
+        _client()
+        .table("episode_metrics")
+        .select("*")
+        .order("recorded_at", desc=True)
+        .limit(limit)
+        .execute()
+        .data
+        or []
+    )
+
+    if not metrics:
+        return {
+            "episode_count": 0,
+            "confidence": "no_data",
+            "lessons": [],
+            "episodes": [],
+        }
+
+    # Use the latest saved snapshot per project so repeatedly updating one
+    # episode does not make it count as several different videos.
+    latest_by_project = {}
+    for row in metrics:
+        pid = row.get("project_id")
+        if pid and pid not in latest_by_project:
+            latest_by_project[pid] = row
+
+    project_ids = list(latest_by_project)
+    projects = (
+        _client()
+        .table("projects")
+        .select("id,story_name,target_minutes")
+        .in_("id", project_ids)
+        .execute()
+        .data
+        or []
+    )
+    project_map = {row.get("id"): row for row in projects}
+
+    episodes = []
+    for pid, row in latest_by_project.items():
+        project = project_map.get(pid, {})
+        item = {
+            "project_id": pid,
+            "story_name": project.get("story_name") or "Untitled",
+            "target_minutes": project.get("target_minutes"),
+            "views": row.get("views"),
+            "impressions": row.get("impressions"),
+            "ctr": row.get("ctr"),
+            "average_view_duration_seconds": row.get(
+                "average_view_duration_seconds"
+            ),
+            "average_percentage_viewed": row.get(
+                "average_percentage_viewed"
+            ),
+            "subscribers_gained": row.get("subscribers_gained"),
+            "notes": row.get("notes"),
+            "recorded_at": row.get("recorded_at"),
+        }
+        episodes.append(item)
+
+    count = len(episodes)
+
+    def _nums(field):
+        values = []
+        for item in episodes:
+            value = item.get(field)
+            try:
+                value = float(value)
+            except Exception:
+                continue
+            if value > 0:
+                values.append(value)
+        return values
+
+    ctr_values = _nums("ctr")
+    apv_values = _nums("average_percentage_viewed")
+    avd_values = _nums("average_view_duration_seconds")
+
+    averages = {
+        "ctr": round(sum(ctr_values) / len(ctr_values), 2)
+        if ctr_values
+        else None,
+        "average_percentage_viewed": round(
+            sum(apv_values) / len(apv_values),
+            2,
+        )
+        if apv_values
+        else None,
+        "average_view_duration_seconds": round(
+            sum(avd_values) / len(avd_values),
+            1,
+        )
+        if avd_values
+        else None,
+    }
+
+    if count >= 8:
+        confidence = "strong"
+    elif count >= 5:
+        confidence = "useful"
+    elif count >= 3:
+        confidence = "emerging"
+    else:
+        confidence = "early"
+
+    lessons = []
+
+    if averages["ctr"] is not None:
+        lessons.append(
+            f"Current channel-average CTR is {averages['ctr']:.1f}%. "
+            "Use this as a comparison point for packaging, not a universal target."
+        )
+
+    if averages["average_percentage_viewed"] is not None:
+        lessons.append(
+            "Current channel-average percentage viewed is "
+            f"{averages['average_percentage_viewed']:.1f}%. "
+            "Favor structures that improve completion without padding runtime."
+        )
+
+    if averages["average_view_duration_seconds"] is not None:
+        seconds = int(round(averages["average_view_duration_seconds"]))
+        lessons.append(
+            f"Current channel-average view duration is about {seconds} seconds."
+        )
+
+    if episodes:
+        top_apv = max(
+            episodes,
+            key=lambda x: float(x.get("average_percentage_viewed") or 0),
+        )
+        if float(top_apv.get("average_percentage_viewed") or 0) > 0:
+            lessons.append(
+                f"Best saved completion so far: {top_apv['story_name']} at "
+                f"{float(top_apv['average_percentage_viewed']):.1f}% viewed. "
+                "Study its pacing and narrative structure, but do not copy surface details."
+            )
+
+        top_ctr = max(
+            episodes,
+            key=lambda x: float(x.get("ctr") or 0),
+        )
+        if float(top_ctr.get("ctr") or 0) > 0:
+            lessons.append(
+                f"Best saved CTR so far: {top_ctr['story_name']} at "
+                f"{float(top_ctr['ctr']):.1f}%. "
+                "Treat its promise/packaging relationship as evidence worth studying."
+            )
+
+    note_items = [
+        (item.get("story_name"), str(item.get("notes") or "").strip())
+        for item in episodes
+        if str(item.get("notes") or "").strip()
+    ][:5]
+
+    return {
+        "episode_count": count,
+        "confidence": confidence,
+        "averages": averages,
+        "lessons": lessons,
+        "notes": [
+            {"story_name": name, "note": note}
+            for name, note in note_items
+        ],
+        "episodes": episodes,
+    }
+
+
+
 def record_ai_usage(
     project_name,
     section_name,
