@@ -899,6 +899,19 @@ Find additional relevant canonical passages and classify each one as one of:
 For each added passage, explain briefly why it is relevant and whether it should actually influence
 the narration. Do not pad the list with weak connections. Quality matters more than quantity.
 
+STORY-UNIVERSE RESEARCH REQUIREMENT:
+Also research the wider story universe around the selected subject. Look for:
+- distinct episodes from the person's life that deserve separate videos
+- supporting characters with meaningful connected stories
+- cities, regions, temples, kingdoms, journeys and recurring locations that can sustain their own episodes
+- before/after stories that explain how the current story came to happen or what followed it
+- natural Part 1 / Part 2 / Part 3 structures where one long life or narrative should not be crushed into one video
+- connected canonical stories that share a place, conflict, family line, ministry period or major event
+
+Do NOT force everything into one episode. If the subject is broad (for example Jesus, Moses, David,
+Paul, Jerusalem, Babylon), propose a coherent multi-episode series. Each episode must have its own
+dramatic question, scripture scope and reason to exist. Avoid duplicate episodes that tell the same story.
+
 CHANNEL PERFORMANCE LEARNING:
 {json.dumps(channel_learning, indent=2)}
 
@@ -930,6 +943,42 @@ Return:
       "relevance": "",
       "use_in_story": "",
       "confidence": "high|medium|caution"
+    }
+  ],
+  "story_universe": {
+    "character_threads": [
+      {
+        "subject": "",
+        "why_it_matters": "",
+        "references": []
+      }
+    ],
+    "place_threads": [
+      {
+        "place": "",
+        "why_it_matters": "",
+        "references": []
+      }
+    ],
+    "supporting_character_threads": [
+      {
+        "subject": "",
+        "why_it_matters": "",
+        "references": []
+      }
+    ]
+  },
+  "series_opportunities": [
+    {
+      "series_title": "",
+      "episode_title": "",
+      "part_number": 1,
+      "focus": "",
+      "bible_references": [],
+      "key_characters": [],
+      "key_places": [],
+      "why_this_deserves_its_own_episode": "",
+      "recommended_runtime_minutes": 8
     }
   ],
   "historical_context": [],
