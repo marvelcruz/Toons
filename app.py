@@ -1044,6 +1044,113 @@ with page_root.container():
                             if relevance:
                                 st.write(relevance)
 
+                    universe = treatment.get("story_universe", {}) or {}
+                    series = treatment.get("series_opportunities", []) or []
+
+                    if universe or series:
+                        st.markdown("## Story universe")
+                        st.caption(
+                            "This expands the subject beyond one video. ToonScripture can find "
+                            "connected characters, places, events and natural Part 1 / Part 2 / Part 3 stories."
+                        )
+
+                        for label, key, title_key in [
+                            ("Character threads", "character_threads", "subject"),
+                            ("Supporting characters", "supporting_character_threads", "subject"),
+                            ("Places & cities", "place_threads", "place"),
+                        ]:
+                            items = universe.get(key, []) or []
+                            if items:
+                                st.markdown(f"### {label}")
+                                for item in items:
+                                    if not isinstance(item, dict):
+                                        st.write("•", item)
+                                        continue
+                                    title = item.get(title_key) or "Untitled"
+                                    st.markdown(f"**{title}**")
+                                    if item.get("why_it_matters"):
+                                        st.write(item["why_it_matters"])
+                                    refs = item.get("references", []) or []
+                                    if refs:
+                                        st.caption("Bible: " + "; ".join(str(x) for x in refs))
+
+                        if series:
+                            st.markdown("### Episode opportunities")
+                            st.caption(
+                                "Create any of these as a separate episode instead of squeezing "
+                                "an entire life, city or ministry into one video."
+                            )
+                            for idx, episode in enumerate(series):
+                                if not isinstance(episode, dict):
+                                    continue
+
+                                title = (
+                                    episode.get("episode_title")
+                                    or episode.get("series_title")
+                                    or f"Episode {idx + 1}"
+                                )
+                                part = episode.get("part_number")
+                                heading = f"Part {part}: {title}" if part else title
+                                st.markdown(f"**{heading}**")
+
+                                if episode.get("focus"):
+                                    st.write(episode["focus"])
+
+                                refs = episode.get("bible_references", []) or []
+                                if refs:
+                                    st.caption(
+                                        "Bible: "
+                                        + "; ".join(str(x) for x in refs)
+                                    )
+
+                                people = episode.get("key_characters", []) or []
+                                places = episode.get("key_places", []) or []
+                                meta = []
+                                if people:
+                                    meta.append(
+                                        "People: " + ", ".join(str(x) for x in people)
+                                    )
+                                if places:
+                                    meta.append(
+                                        "Places: " + ", ".join(str(x) for x in places)
+                                    )
+                                if meta:
+                                    st.caption(" · ".join(meta))
+
+                                reason = episode.get(
+                                    "why_this_deserves_its_own_episode"
+                                )
+                                if reason:
+                                    st.caption(reason)
+
+                                runtime = episode.get(
+                                    "recommended_runtime_minutes",
+                                    8,
+                                )
+                                try:
+                                    runtime = float(runtime)
+                                except Exception:
+                                    runtime = 8.0
+
+                                if st.button(
+                                    f"Create this episode → {title}",
+                                    use_container_width=True,
+                                    key=(
+                                        f"create_story_universe_episode_"
+                                        f"{project['id']}_{idx}"
+                                    ),
+                                ):
+                                    new_pid = create_project(
+                                        title,
+                                        "; ".join(str(x) for x in refs),
+                                        runtime,
+                                        "long_form",
+                                    )
+                                    st.session_state.project_id = new_pid
+                                    st.session_state.main_section = "✍️ Story & Script"
+                                    st.session_state.pop("story_step", None)
+                                    st.rerun()
+
                     with st.expander("See full treatment"):
                         if treatment.get("core_story"):
                             st.markdown("### Core story")
