@@ -133,3 +133,128 @@ create index if not exists idx_episode_metrics_project
 
 -- Runtime access is protected by authenticated-admin RLS policies
 -- applied to the connected Supabase project.
+
+-- -------------------------------------------------------------------
+-- Story Catalog Architect
+-- Separates character records from production stories and episodes.
+-- -------------------------------------------------------------------
+
+create table if not exists public.catalog_stories (
+  id text primary key,
+  story_key text unique not null,
+  story_title text not null,
+  testament text,
+  book text,
+  bible_references text,
+  story_summary text,
+  episode_count integer not null default 1 check (episode_count between 1 and 3),
+  structure_type text not null default 'single',
+  structure_reason text,
+  ai_structure_status text not null default 'analyzed',
+  human_override boolean not null default false,
+  analysis_json jsonb default '{}'::jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists public.catalog_story_people (
+  story_id text not null references public.catalog_stories(id) on delete cascade,
+  catalog_person_id text not null references public.catalog_people(id) on delete cascade,
+  relationship_role text,
+  is_primary boolean not null default false,
+  created_at timestamptz default now(),
+  primary key (story_id, catalog_person_id)
+);
+
+create table if not exists public.catalog_episodes (
+  id text primary key,
+  story_id text not null references public.catalog_stories(id) on delete cascade,
+  episode_number integer not null check (episode_number between 1 and 3),
+  episode_title text not null,
+  display_title text not null,
+  bible_reference text,
+  narrative_scope text,
+  hook text,
+  conflict text,
+  climax text,
+  resolution text,
+  recommended_runtime_minutes double precision,
+  status text not null default 'planned',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (story_id, episode_number)
+);
+
+alter table public.project_catalog_links
+  add column if not exists catalog_story_id text references public.catalog_stories(id) on delete set null;
+
+alter table public.project_catalog_links
+  add column if not exists catalog_episode_id text references public.catalog_episodes(id) on delete set null;
+
+create index if not exists idx_catalog_story_people_person
+  on public.catalog_story_people(catalog_person_id);
+
+create index if not exists idx_catalog_episodes_story
+  on public.catalog_episodes(story_id, episode_number);
+
+alter table public.catalog_stories enable row level security;
+alter table public.catalog_story_people enable row level security;
+alter table public.catalog_episodes enable row level security;
+
+grant select, insert, update, delete on public.catalog_stories to authenticated, service_role;
+grant select, insert, update, delete on public.catalog_story_people to authenticated, service_role;
+grant select, insert, update, delete on public.catalog_episodes to authenticated, service_role;
+
+drop policy if exists "toonscripture admin catalog stories" on public.catalog_stories;
+create policy "toonscripture admin catalog stories"
+on public.catalog_stories
+for all
+to authenticated
+using (
+  exists (
+    select 1 from public.admin_users
+    where admin_users.user_id = (select auth.uid())
+  )
+)
+with check (
+  exists (
+    select 1 from public.admin_users
+    where admin_users.user_id = (select auth.uid())
+  )
+);
+
+drop policy if exists "toonscripture admin story people" on public.catalog_story_people;
+create policy "toonscripture admin story people"
+on public.catalog_story_people
+for all
+to authenticated
+using (
+  exists (
+    select 1 from public.admin_users
+    where admin_users.user_id = (select auth.uid())
+  )
+)
+with check (
+  exists (
+    select 1 from public.admin_users
+    where admin_users.user_id = (select auth.uid())
+  )
+);
+
+drop policy if exists "toonscripture admin catalog episodes" on public.catalog_episodes;
+create policy "toonscripture admin catalog episodes"
+on public.catalog_episodes
+for all
+to authenticated
+using (
+  exists (
+    select 1 from public.admin_users
+    where admin_users.user_id = (select auth.uid())
+  )
+)
+with check (
+  exists (
+    select 1 from public.admin_users
+    where admin_users.user_id = (select auth.uid())
+  )
+);
