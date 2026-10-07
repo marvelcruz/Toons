@@ -271,8 +271,11 @@ with st.sidebar:
                     "Render is not detecting OPENROUTER_API_KEY in the running service."
                 )
 
+            if "_ai_usage_cache" not in st.session_state:
+                st.session_state["_ai_usage_cache"] = ai_usage_today()
+
             if st.button(
-                "Refresh API usage",
+                "Refresh AI activity",
                 use_container_width=True,
                 key="refresh_api_usage",
             ):
@@ -283,60 +286,69 @@ with st.sidebar:
                 for row in st.session_state.get("_ai_usage_cache", [])
             }
 
-            project_sections = [
-                ("A", "Shape story"),
-                ("B", "Write script"),
-                ("C", "Retention"),
-                ("D", "Spare"),
-                ("E", "Scenes"),
-                ("F", "YouTube"),
-                ("G", "Audio"),
-                ("H", "Frame review"),
-                ("I", "Visual Bible"),
+            st.markdown("### AI provider status")
+            st.caption(
+                "This shows ToonScripture's recorded calls and last result. "
+                "It does not pretend to be Google's exact remaining quota."
+            )
+
+            provider_rows = [
+                ("Project A · Shape story", "GEMINI_API_KEY_A"),
+                ("Project B · Write script", "GEMINI_API_KEY_B"),
+                ("Project C · Retention", "GEMINI_API_KEY_C"),
+                ("Project D · Spare", "GEMINI_API_KEY_D"),
+                ("Project E · Scenes", "GEMINI_API_KEY_E"),
+                ("Project F · YouTube", "GEMINI_API_KEY_F"),
+                ("Project G · Audio", "GEMINI_API_KEY_G"),
+                ("Project H · Frame review", "GEMINI_API_KEY_H"),
+                ("Project I · Visual Bible", "GEMINI_API_KEY_I"),
+                ("OpenRouter Free AI", "OPENROUTER_FREE_AI"),
             ]
 
-            st.markdown("### API usage today")
-            st.caption(
-                "Bars show ToonScripture requests made today against a 20-request "
-                "daily guide. This is a usage tracker, not Google's exact remaining quota."
-            )
-            if not st.session_state.get("_ai_usage_cache"):
-                st.caption("Click Refresh API usage when you need these numbers.")
-
-            usage_guide = 20
-
-            for letter, label in project_sections:
-                key_name = f"GEMINI_API_KEY_{letter}"
+            for label, key_name in provider_rows:
                 row = usage_rows.get(key_name, {})
+
+                if key_name == "OPENROUTER_FREE_AI" and not row:
+                    row = usage_rows.get("OPENROUTER_QWEN_FREE", {})
+
                 requests_used = int(row.get("requests", 0) or 0)
                 http_status = row.get("last_http_status")
                 last_status = row.get("last_status")
 
                 if http_status == 429:
                     state = "LIMIT REACHED"
+                elif http_status in (400, 401, 403):
+                    state = "KEY / ACCESS ERROR"
                 elif http_status == 503:
-                    state = "GOOGLE BUSY"
+                    state = "PROVIDER BUSY"
                 elif last_status == "success":
                     state = "WORKING"
                 elif last_status:
                     state = "ERROR"
                 else:
-                    state = "UNUSED"
+                    state = "NO RECORDED CALLS"
 
                 st.markdown(
-                    f"**Project {letter} · {label}**  \n"
-                    f"{requests_used}/{usage_guide} tracked today · {state}"
+                    f"**{label}** · {state}"
+                )
+                st.caption(
+                    f"{requests_used} recorded calls"
+                    + (
+                        f" · Last section: {row.get('last_section')}"
+                        if row.get("last_section")
+                        else ""
+                    )
+                    + (
+                        f" · HTTP {http_status}"
+                        if http_status is not None
+                        else ""
+                    )
                 )
 
-                progress_value = min(
-                    requests_used / usage_guide,
-                    1.0,
-                )
-
-                if http_status == 429:
-                    progress_value = 1.0
-
-                st.progress(progress_value)
+            st.caption(
+                "Gemini daily limits reset at midnight Pacific time. "
+                "Access/key errors do not fix themselves by waiting."
+            )
 
             with st.expander("Which AI project does each section use?"):
                 st.write("**Shape the story** → Project A")
