@@ -142,48 +142,30 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
 
     import requests
 
-    # Avoid Google-hosted free endpoints here because their shared pool can
-    # rate-limit independently of the user's OpenRouter key. Try several
-    # independent free providers instead.
-    model_options = [
-        {
-            "model": "nvidia/nemotron-3-super-120b-a12b:free",
-            "structured": True,
-        },
-        {
-            "model": "minimax/minimax-m3:free",
-            "structured": False,
-        },
-        {
-            "model": "tencent/hy3:free",
-            "structured": False,
-        },
-        {
-            "model": "openrouter/free",
-            "structured": True,
-        },
-    ]
-
+    model = "openrouter/free"
     last_error = None
 
-    for option in model_options:
-        model = option["model"]
-
+    # Let OpenRouter choose among its full free-model pool. Its free router
+    # filters for request capabilities such as structured outputs. We retry
+    # once because a free upstream provider can be temporarily busy or
+    # rate-limited and a second request may be routed elsewhere.
+    for attempt in range(2):
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": user_prompt + "\n\nReturn valid JSON only. Do not wrap it in markdown.",
+                    "content": (
+                        user_prompt
+                        + "\n\nReturn valid JSON only. Do not wrap it in markdown."
+                    ),
                 },
             ],
             "temperature": temperature,
             "max_tokens": 16384,
+            "response_format": {"type": "json_object"},
         }
-
-        if option["structured"]:
-            payload["response_format"] = {"type": "json_object"}
 
         try:
             response = requests.post(
@@ -198,32 +180,45 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
                 timeout=180,
             )
 
-            record_ai_usage(
-                project_name="OPENROUTER_FREE_AI",
-                section_name=section,
-                model_name=model,
-                outcome="success" if response.ok else "error",
-                http_status=response.status_code,
-            )
-
             if not response.ok:
+                record_ai_usage(
+                    project_name="OPENROUTER_FREE_AI",
+                    section_name=section,
+                    model_name=model,
+                    outcome="error",
+                    http_status=response.status_code,
+                )
                 last_error = RuntimeError(
-                    f"{model} returned HTTP {response.status_code}: "
+                    f"OpenRouter free router returned HTTP {response.status_code}: "
                     f"{response.text[:500]}"
                 )
-                continue
+                if response.status_code in (429, 502, 503, 504) and attempt == 0:
+                    time.sleep(2)
+                    continue
+                break
 
             data = response.json()
+            routed_model = str(data.get("model") or model)
             choices = data.get("choices") or []
+
             if not choices:
-                last_error = RuntimeError(
-                    f"{model} returned no generated text."
+                record_ai_usage(
+                    project_name="OPENROUTER_FREE_AI",
+                    section_name=section,
+                    model_name=routed_model,
+                    outcome="empty",
+                    http_status=response.status_code,
                 )
-                continue
+                last_error = RuntimeError(
+                    f"OpenRouter routed to {routed_model}, but no generated text was returned."
+                )
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                break
 
             message = choices[0].get("message") or {}
             content = message.get("content", "")
-
             if isinstance(content, list):
                 content = "".join(
                     str(part.get("text") or "")
@@ -233,10 +228,8 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
 
             text = str(content or "").strip()
 
-            # Some reasoning-capable free models can return the final JSON in
-            # a reasoning/output field while leaving content empty.
             if not text:
-                for field in ("output_text", "reasoning", "reasoning_content"):
+                for field in ("output_text", "reasoning_content"):
                     value = message.get(field)
                     if value:
                         text = str(value).strip()
@@ -244,18 +237,51 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
                             break
 
             if not text:
-                last_error = RuntimeError(
-                    f"{model} returned an empty response."
+                record_ai_usage(
+                    project_name="OPENROUTER_FREE_AI",
+                    section_name=section,
+                    model_name=routed_model,
+                    outcome="empty",
+                    http_status=response.status_code,
                 )
-                continue
+                last_error = RuntimeError(
+                    f"OpenRouter routed to {routed_model}, but the response was empty."
+                )
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                break
 
             try:
-                return _extract_json(text)
+                parsed = _extract_json(text)
             except Exception as exc:
-                last_error = RuntimeError(
-                    f"{model} returned text but not valid JSON: {exc}"
+                record_ai_usage(
+                    project_name="OPENROUTER_FREE_AI",
+                    section_name=section,
+                    model_name=routed_model,
+                    outcome="invalid_json",
+                    http_status=response.status_code,
                 )
-                continue
+                last_error = RuntimeError(
+                    f"OpenRouter routed to {routed_model}, but it returned invalid JSON: {exc}"
+                )
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                break
+
+            record_ai_usage(
+                project_name="OPENROUTER_FREE_AI",
+                section_name=section,
+                model_name=routed_model,
+                outcome="success",
+                http_status=response.status_code,
+            )
+            print(
+                f"[ToonScripture] {section}: OpenRouter free router completed via {routed_model}",
+                flush=True,
+            )
+            return parsed
 
         except requests.Timeout as exc:
             last_error = exc
@@ -266,6 +292,9 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
                 outcome="timeout",
                 http_status=None,
             )
+            if attempt == 0:
+                continue
+
         except requests.RequestException as exc:
             last_error = exc
             record_ai_usage(
@@ -275,9 +304,11 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
                 outcome="network_error",
                 http_status=None,
             )
+            if attempt == 0:
+                continue
 
     raise RuntimeError(
-        "OpenRouter Free AI could not complete this request. "
+        "OpenRouter Free AI could not complete this request after trying the free router. "
         f"Last error: {last_error}"
     )
 
