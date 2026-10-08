@@ -1398,6 +1398,10 @@ with page_root.container():
                         "Gemini, Claude and OpenRouter each write the full episode independently. "
                         "Then they are scored blind before you move to the master script."
                     )
+                    st.caption(
+                        "Background active: tested 7,325-line Bible storytelling transcript corpus + "
+                        "the extracted step-by-step writing playbook. The corpus guides craft, not Scripture facts."
+                    )
 
                     writer_error = None
 
