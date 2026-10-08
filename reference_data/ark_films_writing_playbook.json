@@ -1,0 +1,156 @@
+{
+  "name": "Tested Bible Storytelling Reference Playbook",
+  "source_corpus": "reference_data/ark_films_transcript_corpus.txt",
+  "purpose": "Use the uploaded high-performing animated Bible transcript collection as background evidence for structure, pacing, retention and cinematic narration. Do not copy distinctive wording.",
+  "non_negotiables": [
+    "Scripture and the approved treatment remain the factual spine.",
+    "Reference transcripts are style and storytelling evidence, not biblical authority.",
+    "Never import invented biographical facts from a reference transcript into a different story.",
+    "Never present cinematic invention as explicit Scripture.",
+    "Do not imitate distinctive sentences or phrases verbatim.",
+    "Prefer plausible connective tissue, gestures, environment, silence and emotional inference over invented major events."
+  ],
+  "story_build_sequence": [
+    {
+      "step": 1,
+      "name": "Emotional contradiction hook",
+      "instruction": "Open with the human contradiction, wound, danger or impossible choice at the heart of the character. Do not begin like a Bible encyclopedia."
+    },
+    {
+      "step": 2,
+      "name": "Trailer before the movie",
+      "instruction": "Preview 3-5 future reversals, dangers or emotional payoffs without resolving them. Give the viewer specific future moments they now need to see."
+    },
+    {
+      "step": 3,
+      "name": "Viewer promise",
+      "instruction": "State or imply the emotional experience and central dramatic question. Keep the promise tied to the actual biblical story rather than generic inspiration."
+    },
+    {
+      "step": 4,
+      "name": "Return to the beginning",
+      "instruction": "After the hook/trailer, begin the chronological narrative cleanly and orient the viewer in person, place, conflict and immediate stakes."
+    },
+    {
+      "step": 5,
+      "name": "State-changing chapters",
+      "instruction": "Every major section should materially change danger, power, relationship, knowledge, goal, emotion, status or moral choice. If nothing changes, compress or remove the section."
+    },
+    {
+      "step": 6,
+      "name": "Cause and effect",
+      "instruction": "Build transitions around because / therefore / but logic. Avoid event-list narration that feels like 'and then, and then, and then'."
+    },
+    {
+      "step": 7,
+      "name": "Mini open loops",
+      "instruction": "Before transitions, create honest curiosity about the next consequence, revelation, test, reversal or decision. Never manufacture suspense that Scripture does not support."
+    },
+    {
+      "step": 8,
+      "name": "Visual narration",
+      "instruction": "Write concrete actions, objects, environments, expressions and spatial changes that naturally translate into animation shots."
+    },
+    {
+      "step": 9,
+      "name": "Event + meaning + emotion",
+      "instruction": "For important moments, make clear what happened, why it changes the story and what it costs emotionally. Do not over-explain every beat."
+    },
+    {
+      "step": 10,
+      "name": "Motif and callback",
+      "instruction": "When the biblical material supports it, plant a visual or emotional motif early and return to it transformed near the climax or ending."
+    },
+    {
+      "step": 11,
+      "name": "Rhythmic narration",
+      "instruction": "Vary sentence length. Use occasional short impact lines, controlled repetition, parallelism and three-beat phrasing for spoken rhythm without becoming formulaic."
+    },
+    {
+      "step": 12,
+      "name": "Let the climax breathe",
+      "instruction": "Do not rush the emotional or narrative climax. Slow down enough for action, reaction, silence, dialogue and consequence to land."
+    },
+    {
+      "step": 13,
+      "name": "Resolve before teaching",
+      "instruction": "Finish the narrative payoff first. Then move to meaning, personal resonance and application."
+    },
+    {
+      "step": 14,
+      "name": "Personal resonance",
+      "instruction": "Connect the story to a human experience without generic sermon filler. The application should grow naturally from the character's actual journey."
+    },
+    {
+      "step": 15,
+      "name": "CTA last",
+      "instruction": "Keep early calls-to-action minimal. Put the full like/share/subscribe prompt after the emotional and narrative payoff unless there is a specific production reason not to."
+    }
+  ],
+  "writer_room_scoring": [
+    {
+      "criterion": "scriptural_accuracy_and_responsible_interpretation",
+      "weight": 20
+    },
+    {
+      "criterion": "hook_contradiction_and_first_30_seconds",
+      "weight": 10
+    },
+    {
+      "criterion": "future_payoffs_and_open_loops",
+      "weight": 8
+    },
+    {
+      "criterion": "cause_effect_and_state_changing_structure",
+      "weight": 12
+    },
+    {
+      "criterion": "emotional_specificity_and_character_involvement",
+      "weight": 12
+    },
+    {
+      "criterion": "retention_curiosity_and_pacing",
+      "weight": 10
+    },
+    {
+      "criterion": "sceneability_and_visual_specificity",
+      "weight": 8
+    },
+    {
+      "criterion": "motifs_callbacks_and_cohesion",
+      "weight": 6
+    },
+    {
+      "criterion": "sentence_rhythm_and_narration_quality",
+      "weight": 4
+    },
+    {
+      "criterion": "climax_ending_and_personal_resonance",
+      "weight": 6
+    },
+    {
+      "criterion": "runtime_discipline_repetition_and_polish",
+      "weight": 4
+    }
+  ],
+  "master_editor_questions": [
+    "Which draft has the strongest emotional contradiction in the hook?",
+    "Which draft creates the clearest future payoffs without spoiling them?",
+    "Which draft has the strongest cause-and-effect narrative spine?",
+    "Which draft has the strongest emotional arc?",
+    "Which draft has the strongest visual and sceneable writing?",
+    "Which draft has the best motif or callback?",
+    "Which draft handles Scripture and interpretation most responsibly?",
+    "Which draft has the strongest climax and ending?",
+    "Which individual lines or moments are genuinely stronger than the rest, regardless of which draft scored highest overall?"
+  ],
+  "adaptation_guardrail": {
+    "fact_classes": [
+      "scriptural_fact",
+      "historically_plausible_context",
+      "cinematic_connective_tissue",
+      "unsupported_invention"
+    ],
+    "rule": "Use scriptural fact freely, plausible context with care, cinematic connective tissue only when it does not alter doctrine or major events, and exclude unsupported invention from the final script."
+  }
+}
