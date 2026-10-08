@@ -18,6 +18,10 @@ from story_catalog import (
     list_unstructured_people,
     save_story_structure,
 )
+from reference_library import (
+    compact_playbook_text,
+    writer_reference_context,
+)
 
 
 def _api_keys():
@@ -1386,6 +1390,8 @@ def develop_treatment(project_id):
     target_minutes = float(p['target_minutes'])
     target_seconds = int(round(target_minutes * 60))
     channel_learning = channel_performance_learning()
+    reference_context = writer_reference_context(p, treatment={})
+    reference_playbook = compact_playbook_text()
 
     # Scale story density with runtime instead of forcing every episode into
     # the same number of beats.
@@ -1427,6 +1433,20 @@ dramatic question, scripture scope and reason to exist. Avoid duplicate episodes
 
 CHANNEL PERFORMANCE LEARNING:
 {json.dumps(channel_learning, indent=2)}
+
+TESTED STORYTELLING REFERENCE PLAYBOOK:
+{reference_playbook}
+
+RELEVANT EXCERPTS FROM THE TESTED TRANSCRIPT CORPUS:
+{json.dumps(reference_context.get("relevant_reference_excerpts", []), ensure_ascii=False, indent=2)}
+
+REFERENCE-CORPUS RULES:
+- Use the corpus to learn structure, pacing, emotional framing, sceneability and retention.
+- Do not copy distinctive phrases or sentences.
+- The corpus is not biblical authority.
+- Never import invented biography or events just because they appear in a reference transcript.
+- Scripture and the approved episode scope always win.
+- Build the treatment around the full step-by-step sequence in the playbook, but adapt naturally to the story.
 
 Use channel learning carefully:
 - Treat it as evidence, not a rigid formula.
@@ -1527,6 +1547,7 @@ def _writer_room_script_prompt(project_id):
     treatment = load_json(p, "treatment_json", {})
     target_minutes = float(p["target_minutes"])
     channel_learning = channel_performance_learning()
+    reference_context = writer_reference_context(p, treatment=treatment)
 
     min_words = int(round(target_minutes * 125))
     target_words = int(round(target_minutes * 140))
@@ -1544,6 +1565,33 @@ APPROVED TREATMENT:
 
 CHANNEL PERFORMANCE LEARNING:
 {json.dumps(channel_learning, indent=2)}
+
+TESTED STORYTELLING BACKGROUND:
+{json.dumps(reference_context, ensure_ascii=False, indent=2)}
+
+MANDATORY STORY-BUILD ORDER:
+Use the reference playbook as a checklist, not as optional inspiration:
+1. Find the emotional contradiction / human wound / impossible choice.
+2. Build a trailer-before-the-movie opening with honest future payoffs.
+3. Confirm the viewer promise and dramatic question.
+4. Return cleanly to the chronological beginning.
+5. Organize the body into state-changing chapters.
+6. Link beats through cause/effect rather than event-list narration.
+7. Maintain honest mini-open-loops.
+8. Write visually and sceneably.
+9. Pair important events with meaning and emotional cost.
+10. Plant and pay off a motif/callback when the biblical material supports one.
+11. Vary sentence rhythm for spoken narration.
+12. Let the climax breathe.
+13. Resolve the narrative before teaching the lesson.
+14. Draw personal resonance from the actual story.
+15. Put the full CTA after the emotional payoff.
+
+REFERENCE SAFETY:
+- Do not copy distinctive language from the corpus.
+- Do not turn reference-transcript inventions into Bible facts.
+- Distinguish scriptural fact, plausible context, cinematic connective tissue and unsupported invention.
+- Exclude unsupported invention from the final script.
 
 Apply channel learning only when the data actually supports it. Do not overfit a single video's result.
 
@@ -1578,13 +1626,16 @@ Do not guess which model wrote which script.
 
 Score out of 100 using this weighted standard:
 - Scriptural accuracy and responsible interpretation: 20
-- Hook / first 30 seconds / promise match: 15
-- Story structure, cause-and-effect and clarity: 15
-- Emotional power and character involvement: 15
-- Retention, curiosity and pacing: 15
-- Specificity, sceneability and cinematic usefulness: 10
-- Ending payoff and memorability: 5
-- Runtime discipline, repetition control and polish: 5
+- Emotional contradiction hook + first 30 seconds: 10
+- Future payoffs / honest open loops: 8
+- Cause-effect logic + state-changing structure: 12
+- Emotional specificity and character involvement: 12
+- Retention, curiosity and pacing: 10
+- Sceneability and visual specificity: 8
+- Motifs, callbacks and cohesion: 6
+- Sentence rhythm and narration quality: 4
+- Climax, ending and personal resonance: 6
+- Runtime discipline, repetition control and polish: 4
 
 A 95+ should be genuinely exceptional.
 
@@ -1597,10 +1648,13 @@ Return valid JSON exactly:
       "category_scores": {
         "accuracy": 0,
         "hook": 0,
+        "open_loops": 0,
         "structure": 0,
         "emotion": 0,
         "retention": 0,
         "sceneability": 0,
+        "motifs": 0,
+        "rhythm": 0,
         "ending": 0,
         "polish": 0
       },
@@ -1621,14 +1675,18 @@ Your job is to produce the crème-de-la-crème script: not a compromise, not an 
 winner-takes-all selection.
 
 First identify the strongest usable elements across the room:
-- hook and opening language
-- narrative spine and ordering
+- emotional contradiction and opening hook
+- future-payoff/open-loop design
+- narrative spine, state changes and cause-effect ordering
 - strongest emotional beats
 - clearest Scripture-grounded explanations
 - strongest transitions
 - best dialogue or sceneable moments
+- strongest visual writing
+- strongest motif/callback
 - strongest suspense / curiosity devices
-- strongest ending payoff
+- strongest climax
+- strongest ending payoff and personal resonance
 
 Resolve contradictions using Scripture and the approved treatment.
 Reject weak material even if it came from the highest-scoring candidate.
@@ -1684,10 +1742,18 @@ def _score_writer_room_candidates(candidates, treatment):
 APPROVED TREATMENT:
 {json.dumps(treatment, indent=2)}
 
+TESTED STORYTELLING PLAYBOOK:
+{compact_playbook_text()}
+
 ANONYMIZED CANDIDATES:
 {json.dumps(blind_scripts, ensure_ascii=False, indent=2)}
 
-Score every candidate using the rubric. Return all candidates in one response.
+Score every candidate using the rubric. Penalize event-list narration, weak state changes,
+generic sermon filler, unsupported invention, rushed climaxes and hooks that merely summarize.
+Reward honest open loops, strong cause-effect, sceneability, emotional specificity, motifs/callbacks,
+spoken rhythm and a resolved narrative before application.
+
+Return all candidates in one response.
 """
 
     judges = {}
@@ -1868,7 +1934,15 @@ RAW WRITERS' ROOM SCRIPTS:
 BLIND JURY SCORECARDS:
 {json.dumps(room.get("scorecards", {}), ensure_ascii=False, indent=2)}
 
+TESTED STORYTELLING PLAYBOOK:
+{compact_playbook_text()}
+
 Build the final master script using the strongest material across ALL usable drafts.
+Do not simply choose the highest-scoring draft. Compare the room criterion by criterion:
+hook, future payoffs, narrative spine, emotional arc, sceneability, motif, Scripture handling,
+sentence rhythm, climax and ending. Pull the strongest pieces, reject weak material, then rewrite
+the result into one coherent voice.
+
 The source labels in elements_taken_from_each must be gemini, claude and openrouter.
 """
 
