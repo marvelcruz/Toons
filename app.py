@@ -47,6 +47,7 @@ from workflow import (
     synthesize_writer_room,
     critique_script,
     improve_script_once,
+    diagnose_retention_connections,
     build_character_bible,
     plan_scenes,
     make_package,
@@ -845,15 +846,15 @@ with st.sidebar:
 
         if _api_key():
             count = _api_key_count()
-            st.success("AI tools are connected", icon="✅")
+            st.success("Gemini API keys are configured", icon="✅")
             st.caption(
                 f"{count} configured Gemini project"
                 + ("s" if count != 1 else "")
             )
 
             if _openrouter_key():
-                st.success("OpenRouter Free AI is connected", icon="✅")
-                st.caption("A free OpenRouter model is available as the second AI reviewer.")
+                st.success("OpenRouter API key is configured", icon="✅")
+                st.caption("Use the connection test below to check actual provider availability.")
             else:
                 st.error("OpenRouter Free AI is NOT connected")
                 st.caption(
@@ -951,10 +952,41 @@ with st.sidebar:
                 "Access/key errors do not fix themselves by waiting."
             )
 
+            st.markdown("### Retention API connection test")
+            st.caption(
+                "Run a small, on-demand test of Gemini C, Gemini D and OpenRouter. "
+                "API keys stay on the server and are never displayed. "
+                "Each test uses a small amount of provider quota."
+            )
+            if st.button(
+                "Test retention API connections",
+                use_container_width=True,
+                key="test_retention_api_connections",
+            ):
+                with st.spinner("Checking the configured AI connections..."):
+                    st.session_state["retention_connection_test"] = (
+                        diagnose_retention_connections()
+                    )
+            for check in st.session_state.get("retention_connection_test", []):
+                display_name = check["provider"].replace("GEMINI_API_KEY_", "Gemini ")
+                label = f"{display_name}: {check['status']}"
+                if check["status"] == "WORKING":
+                    st.success(label)
+                elif check["status"] in ("TIMED OUT", "PROVIDER_UNAVAILABLE", "RATE_LIMITED"):
+                    st.warning(label)
+                else:
+                    st.error(label)
+            if st.session_state.get("retention_connection_test"):
+                st.caption(
+                    "A successful smoke test confirms basic API access, not that "
+                    "every long script or rewrite will succeed."
+                )
+
             with st.expander("Which AI project does each section use?"):
                 st.write("**Shape the story** → Project A")
                 st.write("**Write the script** → Project B")
-                st.write("**Viewer retention** → Project C")
+                st.write("**Viewer retention** → OpenRouter, then Project D if needed")
+                st.caption("Project C is listed for diagnostics because it previously returned HTTP 400.")
                 st.write("**Visual Bible** → Project I")
                 st.write("**Scene Production** → Project E")
                 st.write("**YouTube package** → Project F")

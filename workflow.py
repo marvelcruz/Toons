@@ -149,6 +149,143 @@ def _extract_json(text):
         raise
 
 
+def _gemini_error_category(response):
+    """Classify Google API failures without exposing API keys or request bodies."""
+    try:
+        body = response.json()
+        detail = body.get("error", {}) if isinstance(body, dict) else {}
+        detail = detail if isinstance(detail, dict) else {}
+        message = str(detail.get("message") or "").lower()
+        status = str(detail.get("status") or "").upper()
+    except (ValueError, TypeError, AttributeError):
+        message = ""
+        status = ""
+
+    if any(x in message for x in ("api key not valid", "invalid api key", "api_key_invalid")):
+        return "INVALID_API_KEY"
+    if "expired" in message and "key" in message:
+        return "EXPIRED_API_KEY"
+    if "permission" in message or "restricted" in message:
+        return "PROJECT_ACCESS_RESTRICTED"
+    if "service disabled" in message or "api has not been used" in message:
+        return "API_NOT_ENABLED"
+    if "billing" in message or "payment" in message:
+        return "BILLING_OR_PROJECT_PREREQUISITE"
+    if "model" in message and ("not found" in message or "not supported" in message):
+        return "MODEL_UNAVAILABLE_FOR_PROJECT"
+    if "token" in message and ("limit" in message or "exceed" in message):
+        return "REQUEST_TOO_LARGE"
+    if response.status_code == 503:
+        return "PROVIDER_UNAVAILABLE"
+    if response.status_code == 429:
+        return "RATE_LIMITED"
+    if response.status_code == 400:
+        return "INVALID_REQUEST_OR_PROJECT_PREREQUISITE"
+    return status or f"HTTP_{response.status_code}"
+
+
+def diagnose_retention_connections():
+    """
+    On-demand, non-destructive smoke test. Keys stay on the server and no
+    project scripts are sent to providers. This does use a tiny API request.
+    """
+    import requests
+
+    results = []
+    configured = _api_keys()
+    google_keys = {
+        entry["name"]: entry["value"] for entry in configured
+        if entry["name"] in {"GEMINI_API_KEY_C", "GEMINI_API_KEY_D"}
+    }
+    # The endpoint and model match the production retention request.
+    model = str(
+        os.getenv("TOONSCRIPTURE_RETENTION_GEMINI_MODEL")
+        or os.getenv("GEMINI_MODEL")
+        or "gemini-3.8-flash"
+    ).strip().removeprefix("models/")
+    for name in ("GEMINI_API_KEY_C", "GEMINI_API_KEY_D"):
+        if name not in google_keys:
+            results.append({"provider": name, "status": "NOT CONFIGURED"})
+            continue
+        try:
+            config = {
+                "temperature": 0.1,
+                "responseMimeType": "application/json",
+                "maxOutputTokens": 120,
+            }
+            if model.startswith(("gemini-3", "gemini-4")):
+                config["thinkingConfig"] = {"thinkingLevel": "low"}
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={"x-goog-api-key": google_keys[name], "Content-Type": "application/json"},
+                json={
+                    "contents": [{"role": "user", "parts": [
+                        {"text": 'Return exactly this JSON object: {"connected": true}'}
+                    ]}],
+                    "generationConfig": config,
+                },
+                timeout=(5, 12),
+            )
+            if response.ok:
+                results.append({"provider": name, "status": "WORKING", "http": 200})
+            else:
+                results.append({
+                    "provider": name, "status": _gemini_error_category(response),
+                    "http": response.status_code,
+                })
+        except requests.Timeout:
+            results.append({"provider": name, "status": "TIMED OUT"})
+        except requests.RequestException:
+            results.append({"provider": name, "status": "NETWORK ERROR"})
+
+    openrouter_keys = _openrouter_keys()
+    if not openrouter_keys:
+        results.append({"provider": "OPENROUTER", "status": "NOT CONFIGURED"})
+    else:
+        try:
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openrouter_keys[0]['value']}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://toonscripture.onrender.com",
+                    "X-Title": "ToonScripture OS",
+                },
+                json={
+                    "model": (
+                        os.getenv("TOONSCRIPTURE_RETENTION_OPENROUTER_MODEL", "openrouter/free")
+                        .strip() or "openrouter/free"
+                    ),
+                    "messages": [
+                        {"role": "user", "content": 'Return exactly {"connected": true} as JSON.'}
+                    ],
+                    "provider": {"require_parameters": True},
+                    "response_format": {"type": "json_object"},
+                    "max_tokens": 100,
+                },
+                timeout=(5, 12),
+            )
+            if response.ok:
+                choices = response.json().get("choices") or []
+                raw = ((choices[0].get("message") or {}).get("content") or "") if choices else ""
+                parsed = _extract_json(str(raw))
+                if not isinstance(parsed, dict):
+                    raise ValueError("The provider did not return a JSON object.")
+                results.append({"provider": "OPENROUTER", "status": "WORKING", "http": 200})
+            else:
+                results.append({
+                    "provider": "OPENROUTER", "status": f"HTTP {response.status_code}",
+                    "http": response.status_code,
+                })
+        except (ValueError, KeyError, TypeError):
+            results.append({"provider": "OPENROUTER", "status": "INVALID JSON"})
+        except requests.Timeout:
+            results.append({"provider": "OPENROUTER", "status": "TIMED OUT"})
+        except requests.RequestException:
+            results.append({"provider": "OPENROUTER", "status": "NETWORK ERROR"})
+    return results
+
+
 def _openrouter_keys():
     keys = []
 
@@ -349,6 +486,7 @@ def _call_qwen_json(system_prompt, user_prompt, temperature=0.3, section="genera
         "temperature": temperature,
         "max_tokens": 16384,
         "response_format": {"type": "json_object"},
+        "provider": {"require_parameters": True},
     }
 
     # One OpenRouter collaborator, backed by a pool of authorized keys.
@@ -2061,6 +2199,7 @@ def _fast_retention_json(system_prompt, user_prompt, *, task="review", progress=
                     "temperature": 0.15 if is_review else 0.25,
                     "max_tokens": token_limit,
                     "response_format": {"type": "json_object"},
+                    "provider": {"require_parameters": True},
                 },
                 timeout=(8, openrouter_timeout),
             )
@@ -2139,6 +2278,8 @@ def _fast_retention_json(system_prompt, user_prompt, *, task="review", progress=
                         "temperature": 0.15 if is_review else 0.25,
                         "responseMimeType": "application/json",
                         "maxOutputTokens": token_limit,
+                        **({"thinkingConfig": {"thinkingLevel": "low"}}
+                           if model.startswith(("gemini-3", "gemini-4")) else {}),
                     },
                 },
                 timeout=(8, gemini_timeout),
@@ -2149,7 +2290,9 @@ def _fast_retention_json(system_prompt, user_prompt, *, task="review", progress=
                     model_name=model, outcome="error",
                     http_status=response.status_code,
                 )
-                raise RuntimeError(f"HTTP {response.status_code}")
+                raise RuntimeError(
+                    f"HTTP {response.status_code} ({_gemini_error_category(response)})"
+                )
             data = response.json()
             candidates = data.get("candidates") or []
             parts = (candidates[0].get("content") or {}).get("parts") if candidates else []
