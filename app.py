@@ -2962,21 +2962,77 @@ with page_root.container():
                     round(float(project.get("target_minutes") or 0) * 60)
                 )
 
-                st.markdown("### Full episode scene plan")
-                st.write(
-                    f"**{len(scenes)} scenes** · "
-                    f"**{total_seconds // 60}:{total_seconds % 60:02d} planned** "
-                    f"of **{target_seconds // 60}:{target_seconds % 60:02d} target**"
+                # The saved narration length can be shorter than the initial
+                # episode goal. The scene compiler intentionally follows the
+                # generated voiceover, not the original target minutes.
+                aligned_seconds = int(
+                    scene_data.get("target_runtime_seconds") or 0
                 )
+                is_audio_timed = (
+                    scene_data.get("timing_source") == "narration audio"
+                    and aligned_seconds > 0
+                )
+                runtime_label = (
+                    lambda seconds:
+                    f"{seconds // 60}:{seconds % 60:02d}"
+                )
+                st.markdown("### Full episode scene plan")
+                if is_audio_timed:
+                    st.write(
+                        f"**{len(scenes)} scenes** · "
+                        f"**{runtime_label(total_seconds)} planned** · "
+                        f"**{runtime_label(aligned_seconds)} narration** · "
+                        f"**{runtime_label(target_seconds)} episode target**"
+                    )
+                else:
+                    st.write(
+                        f"**{len(scenes)} scenes** · "
+                        f"**{runtime_label(total_seconds)} planned** · "
+                        f"**{runtime_label(target_seconds)} episode target**"
+                    )
                 st.caption(
                     "Flow clip lengths are locked to 4, 5, 8 or 10 seconds. "
-                    "All scenes are listed below in story order."
+                    "This scene plan allocates total clip time; it does not "
+                    "yet provide word-accurate voiceover timecodes."
                 )
 
-                if target_seconds and abs(total_seconds - target_seconds) > 15:
+                if is_audio_timed and abs(total_seconds - aligned_seconds) > 2:
+                    st.error(
+                        "The clips no longer match the narration duration saved "
+                        "with this scene plan. Rebuild scene prompts to resync "
+                        "the plan with your narration audio."
+                    )
+                elif is_audio_timed and abs(target_seconds - aligned_seconds) > 15:
+                    gap_seconds = abs(target_seconds - aligned_seconds)
+                    if target_seconds > aligned_seconds:
+                        st.warning(
+                            f"The scenes correctly follow your "
+                            f"{runtime_label(aligned_seconds)} saved voiceover, "
+                            f"but the episode target is "
+                            f"{runtime_label(target_seconds)}. "
+                            f"That leaves {runtime_label(gap_seconds)} of "
+                            "the intended episode without narration. Rebuilding "
+                            "with the SAME audio will NOT solve this. To make a "
+                            "longer episode, extend the script and generate a "
+                            "longer voiceover first, then rebuild the scene plan. "
+                            "Or keep the shorter narration and revise the "
+                            "episode's intended runtime."
+                        )
+                    else:
+                        st.warning(
+                            f"The saved narration runs "
+                            f"{runtime_label(gap_seconds)} longer than the "
+                            "episode target. Decide whether to shorten the "
+                            "script/audio or update the intended runtime "
+                            "before producing the clips."
+                        )
+                elif not is_audio_timed and target_seconds and abs(
+                    total_seconds - target_seconds
+                ) > 15:
                     st.warning(
-                        "The current scene timing does not closely match the episode runtime. "
-                        "Click Rebuild scene prompts before production."
+                        "The saved scenes do not match the episode target. "
+                        "Check the narration runtime before rebuilding; "
+                        "a rebuild alone may not solve the mismatch."
                     )
 
                 scene_bible = load_json(
