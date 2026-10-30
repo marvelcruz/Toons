@@ -90,14 +90,28 @@ class InstantSceneProductionTests(unittest.TestCase):
             patch.object(workflow, "load_json", side_effect=lambda p,key,default=None:
                          self.script if key == "script_json" else self.bible),
             patch.object(workflow, "list_project_assets", return_value=[
-                {"metadata_json": {"duration_seconds": 480}}
+                {"metadata_json": {"duration_seconds": 600}}
             ]),
             patch.object(workflow, "save_json"),
         ):
             result = workflow.plan_scenes("test-episode")
-        self.assertEqual(result["target_runtime_seconds"], 480)
+        self.assertEqual(result["target_runtime_seconds"], 600)
         self.assertEqual(result["timing_source"], "narration audio")
         self.assertLessEqual(abs(result["runtime_difference_seconds"]), 2)
+
+    def test_short_audio_does_not_silently_shrink_a_future_episode(self):
+        with (
+            patch.object(workflow, "get_project", return_value=self.project),
+            patch.object(workflow, "load_json", side_effect=lambda p,key,default=None:
+                         self.script if key == "script_json" else self.bible),
+            patch.object(workflow, "list_project_assets", return_value=[
+                {"metadata_json": {"duration_seconds": 379}}
+            ]),
+            patch.object(workflow, "save_json") as save,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Scene Production paused"):
+                workflow.plan_scenes("test-episode")
+        save.assert_not_called()
 
     def test_no_saved_script_or_bible_does_not_overwrite_work(self):
         with (
