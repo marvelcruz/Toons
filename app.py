@@ -3102,37 +3102,55 @@ with page_root.container():
                 with st.expander("Preview narration text"):
                     st.write(full_narration)
 
+                # The 30 official prebuilt voices are always available.
                 voices = list_tts_voices()
-                voice_names = []
-                voice_lookup = {}
+                for extra in st.session_state.get("tts_extended_voice_entries", []):
+                    if extra["id"] not in {v["id"] for v in voices}:
+                        voices.append(extra)
 
-                for voice in voices:
-                    voice_id = (
-                        voice.get("id")
-                        or voice.get("name")
-                        or voice.get("voice_id")
-                        or "Algenib"
-                    )
-                    display = (
-                        voice.get("display_name")
-                        or voice.get("displayName")
-                        or voice_id
-                    )
-                    voice_names.append(display)
-                    voice_lookup[display] = voice_id
-
-                preferred_index = (
-                    voice_names.index("Algenib")
-                    if "Algenib" in voice_names
-                    else 0
+                voice_lookup = {
+                    voice["id"]: voice["display_name"]
+                    for voice in voices
+                }
+                voice_ids = list(voice_lookup)
+                st.caption(
+                    "Choose from all 30 Gemini studio voices. Their descriptions "
+                    "indicate the general speaking character, not a fixed accent."
                 )
 
                 selected_voice = st.selectbox(
                     "Narrator voice",
-                    voice_names,
-                    index=preferred_index,
-                    help="Algenib is the recommended starting voice for ToonScripture.",
+                    voice_ids,
+                    index=voice_ids.index("Algenib"),
+                    format_func=lambda voice_id: voice_lookup[voice_id],
+                    key="narration_voice_selected",
+                    help="Algenib is gravelly; try Charon for informative narration, "
+                         "Gacrux for mature delivery, or Sulafat for warmth.",
                 )
+
+                if st.button(
+                    "Load extended voice library",
+                    use_container_width=True,
+                    key="load_tts_extended_voices",
+                ):
+                    with st.spinner("Checking Google's extended voices..."):
+                        try:
+                            fetched = list_tts_voices(include_extended=True)
+                            st.session_state["tts_extended_voice_entries"] = [
+                                item for item in fetched
+                                if item.get("source") == "extended"
+                            ]
+                            st.session_state.pop("tts_extended_voice_error", None)
+                        except Exception as exc:
+                            st.session_state["tts_extended_voice_error"] = str(exc)
+                    st.rerun()
+                if st.session_state.get("tts_extended_voice_error"):
+                    st.warning(st.session_state["tts_extended_voice_error"])
+                elif st.session_state.get("tts_extended_voice_entries"):
+                    st.caption(
+                        f"{len(st.session_state['tts_extended_voice_entries'])} "
+                        "additional voices loaded for this session."
+                    )
 
                 voice_direction = st.text_area(
                     "Voice direction",
@@ -3156,7 +3174,7 @@ with page_root.container():
                         with st.spinner("Creating narration audio..."):
                             audio_bytes = generate_tts_bytes(
                                 full_narration,
-                                voice_id=voice_lookup[selected_voice],
+                                voice_id=selected_voice,
                                 style_instruction=voice_direction,
                             )
 
@@ -3168,7 +3186,7 @@ with page_root.container():
                                 filename=f"{project['id']}_narration.wav",
                                 content_type="audio/wav",
                                 metadata={
-                                    "voice": voice_lookup[selected_voice],
+                                    "voice": selected_voice,
                                     "voice_direction": voice_direction,
                                     "duration_seconds": audio_duration_seconds(
                                         audio_bytes
