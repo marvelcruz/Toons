@@ -2644,6 +2644,19 @@ def plan_scenes(project_id, progress=None):
         except (ValueError, TypeError):
             audio_seconds = 0
         if audio_seconds > 0:
+            audio_check = audio_runtime_report(
+                audio_seconds, p["target_minutes"]
+            )
+            if not audio_check["matches_target"]:
+                raise RuntimeError(
+                    f"Scene Production paused: the saved narration is "
+                    f"{runtime_label(audio_check['actual_seconds'])}, but "
+                    f"this episode is set to "
+                    f"{runtime_label(audio_check['target_seconds'])}. "
+                    "The script and audio need to match the intended episode "
+                    "length before the full storyboard is rebuilt. "
+                    "Your saved scenes are unchanged."
+                )
             target_seconds = audio_seconds
             timing_source = "narration audio"
 
