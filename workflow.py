@@ -22,6 +22,14 @@ from story_catalog import (
     save_story_structure,
 )
 from scene_planner import make_scene_plan
+from runtime_contract import (
+    script_narration_text,
+    script_runtime_report,
+    audio_runtime_report,
+    runtime_label,
+    DEFAULT_WORDS_PER_MINUTE,
+    WORD_TOLERANCE,
+)
 
 from reference_library import (
     compact_playbook_text,
@@ -1693,15 +1701,17 @@ def _writer_room_script_prompt(project_id):
     channel_learning = channel_performance_learning()
     reference_context = writer_reference_context(p, treatment=treatment)
 
-    min_words = int(round(target_minutes * 125))
-    target_words = int(round(target_minutes * 140))
-    max_words = int(round(target_minutes * 155))
+    target_words = int(round(target_minutes * DEFAULT_WORDS_PER_MINUTE))
+    min_words = int(round(target_words * (1 - WORD_TOLERANCE)))
+    max_words = int(round(target_words * (1 + WORD_TOLERANCE)))
     section_target = max(4, min(16, round(target_minutes * 0.9)))
 
     prompt = f"""
 TARGET RUNTIME: {target_minutes:g} minutes
-NARRATION RANGE: about {min_words}-{max_words} words
-WORKING TARGET: about {target_words} words
+NARRATION RANGE (MANDATORY): {min_words}-{max_words} SPOKEN words, counting
+hook + section narration + dialogue + closing, and excluding headings and metadata.
+WORKING TARGET: {target_words} spoken words. The runtime must be met without repetition or filler.
+Check the actual spoken text word count before returning JSON.
 EXPECTED MAJOR SECTIONS: approximately {section_target}, adjusted naturally for the story
 
 APPROVED TREATMENT:
@@ -2068,7 +2078,15 @@ def synthesize_writer_room(project_id):
     if not scripts:
         raise RuntimeError("Generate the writers' room drafts first.")
 
+    target_report = script_runtime_report({}, p["target_minutes"])
     prompt = f"""
+RUNTIME CONTRACT (MANDATORY FOR THE FINAL MASTER SCRIPT):
+Episode target: {float(p["target_minutes"]):g} minutes.
+Output {target_report["min_words"]}–{target_report["max_words"]} SPOKEN words
+(hook + narration + dialogue + closing). Aim for {target_report["target_words"]}.
+Do not count section titles, JSON keys or editorial notes. Verify before returning.
+If the story cannot responsibly fill that length, do not invent biblical events or add filler.
+
 APPROVED TREATMENT:
 {json.dumps(treatment, ensure_ascii=False, indent=2)}
 
@@ -2122,13 +2140,73 @@ The source labels in elements_taken_from_each must be gemini, claude and openrou
         )
 
     final_script = result["final_script"]
-    room["status"] = "master_ready"
     room["editorial_blueprint"] = result.get("editorial_blueprint", {})
-    room["final_script"] = final_script
+    return _finalize_runtime_checked_master(project_id, p, room, final_script)
 
-    save_json(project_id, "writer_room_json", room)
-    save_json(project_id, "script_json", final_script, "script_ready")
+
+def _finalize_runtime_checked_master(project_id, project, room, candidate):
+    """Attempt one automatic length correction before approving a master script.
+
+    If AI still returns the wrong runtime, preserve the draft in the writers'
+    room but DO NOT silently overwrite the approved script or advance the
+    episode. This protects future episodes from the 10:00 vs 6:19 mismatch.
+    """
+    report = script_runtime_report(candidate, project["target_minutes"])
+    if not report["matches_target"]:
+        prompt = (
+            f"FIX THE ACTUAL SPOKEN SCRIPT LENGTH TO THE APPROVED RUNTIME.\\n"
+            f"Target: {float(project['target_minutes']):g} minutes. "
+            f"Current words: {report['word_count']}. "
+            f"Required words: {report['min_words']} to {report['max_words']}. "
+            f"Aim for {report['target_words']} words.\\n"
+            "Count only spoken hook, narration, dialogue and closing, not headings. "
+            "Rewrite the existing story faithfully with substantive Scripture-grounded "
+            "beats, clear transitions and emotional specificity. Do not pad, repeat "
+            "ideas, invent events or alter the biblical facts. "
+            "Keep the hook/sections/closing JSON schema. Return only that script JSON.\\n"
+            "CURRENT MASTER SCRIPT:\\n"
+            + json.dumps(candidate, ensure_ascii=False)
+        )
+        try:
+            revision = _call_gemini_only(
+                SCRIPT_SYSTEM, prompt, 0.22, section="script"
+            )
+            if isinstance(revision, dict) and isinstance(revision.get("sections"), list):
+                new_report = script_runtime_report(
+                    revision, project["target_minutes"]
+                )
+                if abs(new_report["word_count"] - new_report["target_words"]) < abs(
+                    report["word_count"] - report["target_words"]
+                ):
+                    candidate, report = revision, new_report
+        except Exception as exc:
+            print(
+                f"[ToonScripture] Runtime rewrite unavailable: {type(exc).__name__}",
+                flush=True,
+            )
+
+    room["final_script"] = candidate
+    room["runtime_report"] = report
+    if report["matches_target"]:
+        room["status"] = "master_ready"
+        save_json(project_id, "writer_room_json", room)
+        save_json(project_id, "script_json", candidate, "script_ready")
+    else:
+        room["status"] = "master_needs_runtime_repair"
+        save_json(project_id, "writer_room_json", room)
     return room
+
+
+def repair_master_runtime(project_id):
+    """Retry only the duration correction, not the whole writers' room."""
+    project = get_project(project_id)
+    room = load_json(project, "writer_room_json", {})
+    candidate = room.get("final_script")
+    if not isinstance(candidate, dict):
+        raise RuntimeError("Generate a master script before fixing its duration.")
+    return _finalize_runtime_checked_master(
+        project_id, project, room, candidate
+    )
 
 
 def draft_script(project_id):
@@ -3083,35 +3161,7 @@ Return:
 def narration_text(project_id):
     project = get_project(project_id)
     script = load_json(project, "script_json", {}) if project else {}
-
-    parts = []
-
-    if script.get("hook"):
-        parts.append(str(script["hook"]).strip())
-
-    for section in script.get("sections", []):
-        narration = section.get("narration")
-        if narration:
-            parts.append(str(narration).strip())
-
-        dialogue = section.get("dialogue")
-        if isinstance(dialogue, list):
-            for line in dialogue:
-                if isinstance(line, str) and line.strip():
-                    parts.append(line.strip())
-                elif isinstance(line, dict):
-                    text = (
-                        line.get("line")
-                        or line.get("dialogue")
-                        or line.get("text")
-                    )
-                    if text:
-                        parts.append(str(text).strip())
-
-    if script.get("closing"):
-        parts.append(str(script["closing"]).strip())
-
-    return "\n\n".join(part for part in parts if part)
+    return script_narration_text(script)
 
 
 # Gemini's published prebuilt studio voices are stable identifiers. They should
