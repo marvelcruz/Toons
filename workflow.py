@@ -21,6 +21,8 @@ from story_catalog import (
     list_unstructured_people,
     save_story_structure,
 )
+from scene_planner import make_scene_plan
+
 from reference_library import (
     compact_playbook_text,
     writer_reference_context,
@@ -2529,132 +2531,74 @@ def _fit_flow_durations(raw_durations, target_seconds):
     return states[best_total][1]
 
 
-def plan_scenes(project_id):
+def plan_scenes(project_id, progress=None):
+    """Create an editable first scene plan directly from approved story assets.
+
+    No Gemini or OpenRouter calls in this stage. This matters for episodes
+    containing 60–150+ Flow clips, which are too big for one free model output.
+    """
+    def report(value, message):
+        if progress is not None:
+            progress(value, message)
+
+    report(5, "Opening approved script and Visual Bible")
     p = get_project(project_id)
     script = load_json(p, "script_json", {})
     bible = load_json(p, "character_bible_json", {})
+    if not script:
+        raise RuntimeError("Finish and save the script before building scenes.")
+    if not bible:
+        raise RuntimeError("Finish and save the Visual Bible before building scenes.")
 
     target_seconds = int(round(float(p["target_minutes"]) * 60))
     timing_source = "episode target"
-
     saved_audio = list_project_assets(project_id, "narration_audio")
     if saved_audio:
         metadata = saved_audio[0].get("metadata_json") or {}
-        audio_seconds = metadata.get("duration_seconds")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except ValueError:
+                metadata = {}
+        audio_seconds = metadata.get("duration_seconds") if isinstance(metadata, dict) else None
         try:
             audio_seconds = int(round(float(audio_seconds)))
-        except Exception:
+        except (ValueError, TypeError):
             audio_seconds = 0
-
         if audio_seconds > 0:
             target_seconds = audio_seconds
             timing_source = "narration audio"
 
-    narration_parts = []
-    if script.get("hook"):
-        narration_parts.append(("Opening hook", script["hook"]))
-
-    for section in script.get("sections", []):
-        text = section.get("narration") or ""
-        dialogue = section.get("dialogue") or []
-        if isinstance(dialogue, list):
-            dialogue_text = " ".join(
-                line if isinstance(line, str)
-                else str(
-                    line.get("text")
-                    or line.get("line")
-                    or line.get("dialogue")
-                    or ""
-                )
-                for line in dialogue
-            )
-            text = (text + " " + dialogue_text).strip()
-
-        if text:
-            narration_parts.append(
-                (section.get("name") or "Story section", text)
-            )
-
-    if script.get("closing"):
-        narration_parts.append(("Closing", script["closing"]))
-
-    # One AI request for the entire episode. The previous per-section approach
-    # caused 8-12 long network calls and made Streamlit appear frozen.
-    scene_count = max(1, round(target_seconds / 8))
-
-    full_narration = "\n\n".join(
-        f"{name}:\n{text}"
-        for name, text in narration_parts
+    scenes = make_scene_plan(
+        script, bible, target_seconds, progress=report
     )
-
-    prompt = f"""
-STORY: {p['story_name']}
-FULL EPISODE RUNTIME: {target_seconds} seconds
-TIMING SOURCE: {timing_source}
-
-FULL APPROVED NARRATION, IN ORDER:
-{full_narration}
-
-CHARACTER/WORLD BIBLE:
-{json.dumps(bible, indent=2)}
-
-Create EXACTLY {scene_count} Flow-ready clips for the WHOLE EPISODE in narration order.
-
-Important:
-- Every part of the narration must be visually covered.
-- duration_seconds may ONLY be 4, 5, 8, or 10.
-- Use start_state -> dominant_action -> end_state for every clip.
-- Keep recurring characters, costumes, locations and props consistent with the Visual Bible.
-- Use shorter clips for fast action and longer clips for reflective or establishing beats.
-- Do not merge distant story moments into one clip.
-- Return one JSON object with a single scenes array.
-"""
-
-    out = call_json(
-        SCENE_SYSTEM,
-        prompt,
-        0.2,
-        section="scenes",
-    )
-
-    scenes = out.get("scenes", []) or []
-    if not scenes:
-        raise RuntimeError("The scene planner returned no scenes.")
-
-    # Normalize numbering and Flow-supported lengths.
-    for index, scene in enumerate(scenes, start=1):
-        duration = int(scene.get("duration_seconds") or 8)
-        scene["duration_seconds"] = min(
-            (4, 5, 8, 10),
-            key=lambda value: abs(value - duration),
-        )
-        scene["scene_number"] = index
-        scene.setdefault("production_status", "not_started")
-
+    report(90, "Matching clip timing to the episode runtime")
     fitted_durations = _fit_flow_durations(
-        [scene.get("duration_seconds") or 8 for scene in scenes],
-        target_seconds,
+        [scene["duration_seconds"] for scene in scenes], target_seconds
     )
+    for index, (scene, duration) in enumerate(zip(scenes, fitted_durations), start=1):
+        scene["scene_number"] = index
+        scene["duration_seconds"] = int(duration)
 
-    for scene, duration in zip(scenes, fitted_durations):
-        scene["duration_seconds"] = duration
-
-    planned_seconds = sum(
-        int(scene.get("duration_seconds") or 0)
-        for scene in scenes
-    )
-
-    out = {
+    planned_seconds = sum(scene["duration_seconds"] for scene in scenes)
+    result = {
         "target_runtime_seconds": target_seconds,
         "timing_source": timing_source,
         "allowed_clip_lengths": [4, 5, 8, 10],
         "planned_runtime_seconds": planned_seconds,
         "runtime_difference_seconds": planned_seconds - target_seconds,
+        "generation_mode": "instant_storyboard",
         "scenes": scenes,
     }
+    # Save only a complete, validated draft; never overwrite existing scenes
+    # after a partially failed build.
+    if not scenes or any(not isinstance(x, dict) for x in scenes):
+        raise RuntimeError("Scene plan validation failed; the saved scenes are unchanged.")
+    report(96, "Saving editable scene prompts")
+    save_json(project_id, "scenes_json", result, "scenes_ready")
+    report(100, f"Saved {len(scenes)} Flow-ready clips")
+    return result
 
-    save_json(project_id, "scenes_json", out, "scenes_ready")
-    return out
 
 def make_package(project_id):
     p = get_project(project_id)
