@@ -1218,7 +1218,7 @@ def start_new_episode_dialog():
                     episode_id=episode_id,
                 )
                 st.session_state.project_id = pid
-                st.session_state.main_section = "✍️ Story & Script"
+                st.session_state.main_section = "📚 Story Style & Research"
                 st.rerun()
 
         st.divider()
@@ -1322,7 +1322,7 @@ def start_new_episode_dialog():
                 )
                 set_catalog_production_status(selected_id, "in_progress")
                 st.session_state.project_id = pid
-                st.session_state.main_section = "✍️ Story & Script"
+                st.session_state.main_section = "📚 Story Style & Research"
                 st.rerun()
         else:
             st.warning("No matching story was found.")
@@ -1363,7 +1363,7 @@ def start_new_episode_dialog():
                 "long_form",
             )
             st.session_state.project_id = pid
-            st.session_state.main_section = "✍️ Story & Script"
+            st.session_state.main_section = "📚 Story Style & Research"
             st.rerun()
 
 
@@ -1571,7 +1571,11 @@ with page_root.container():
                             key=f"dashboard_open_{episode['id']}",
                         ):
                             st.session_state.project_id = episode["id"]
-                            st.session_state.main_section = "✍️ Story & Script"
+                            st.session_state.main_section = (
+                                "✍️ Story & Script"
+                                if style_prepared_or_legacy(episode)
+                                else "📚 Story Style & Research"
+                            )
                             st.rerun()
 
         st.markdown(
@@ -1804,12 +1808,145 @@ with page_root.container():
 
 
     # =========================================================
+    # STORY STYLE & RESEARCH (REQUIRED FOR NEW STORIES)
+    # =========================================================
+
+    if main_section == "📚 Story Style & Research":
+        if not project:
+            st.info("Create or choose an episode from Home first.")
+        else:
+            st.header(project["story_name"])
+            st.caption(
+                "Before writing, ToonScripture pulls relevant storytelling "
+                "techniques and examples from your private reference library "
+                "and saves a brief for this exact episode."
+            )
+
+            style_brief = load_json(project, "style_brief_json", {}) or {}
+            status = reference_source_status()
+            if status["full_corpus_loaded"]:
+                st.success(
+                    f"Full reference collection ready · {status['lines']:,} lines"
+                )
+            else:
+                st.warning(
+                    f"The currently available reference collection has "
+                    f"{status['lines']:,} lines. The original collection contains "
+                    "7,325 lines. Upload the full file into the private reference "
+                    "library below to improve coverage."
+                )
+            st.caption(
+                f"Source: {status['source']} · {status['size_bytes']:,} bytes"
+            )
+            with st.expander("Restore or replace the private reference collection"):
+                st.write(
+                    "Upload the original transcripts as a UTF-8 .txt file. "
+                    "This saves the material privately in Supabase, not public GitHub."
+                )
+                source_upload = st.file_uploader(
+                    "Full reference transcripts (.txt)",
+                    type=["txt"],
+                    key="style_reference_upload",
+                )
+                if source_upload and st.button(
+                    "Save full reference library privately",
+                    use_container_width=True,
+                    key="style_upload_source",
+                ):
+                    try:
+                        text_source = source_upload.getvalue().decode("utf-8-sig")
+                        save_private_style_corpus(
+                            source_upload.name, text_source
+                        )
+                        st.success("Private reference library saved.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(
+                            "Could not save the reference library. "
+                            "The previous version remains available."
+                        )
+                        with st.expander("Technical details"):
+                            st.code(str(exc))
+
+            if not style_brief.get("status") == "ready":
+                st.markdown("### Prepare this episode's storytelling style")
+                st.write(
+                    "ToonScripture will identify relevant transcript examples, "
+                    "extract hooks, suspense, rhythm and emotional storytelling "
+                    "principles, and save them before enabling script creation."
+                )
+            if st.button(
+                "Prepare story style"
+                if not style_brief.get("status") == "ready"
+                else "Refresh story style from reference library",
+                type="primary",
+                use_container_width=True,
+                key="prepare_episode_story_style",
+            ):
+                progress = st.progress(15, text="Reading storytelling reference library")
+                try:
+                    progress.progress(45, text="Finding the relevant examples and techniques")
+                    prepare_episode_style(project["id"])
+                    progress.progress(100, text="Style preparation saved")
+                    st.rerun()
+                except Exception as exc:
+                    progress.empty()
+                    st.error("Style preparation could not finish. The episode is unchanged.")
+                    with st.expander("Technical details"):
+                        st.code(str(exc))
+
+            if style_brief.get("status") == "ready":
+                st.success("Story style preparation complete. Ready for Story & Script.")
+                selection = style_brief.get("selection_type", "")
+                if selection == "general_storytelling":
+                    st.caption(
+                        "No exact subject match was found; the brief uses general "
+                        "storytelling structure examples rather than false matches."
+                    )
+                st.markdown("### Storytelling blueprint")
+                for item in (style_brief.get("storytelling_method") or [])[:10]:
+                    if isinstance(item, dict):
+                        st.markdown(
+                            f"**{item.get('name', 'Writing step')}**"
+                        )
+                        if item.get("instruction"):
+                            st.caption(str(item["instruction"]))
+                with st.expander("Reference examples used"):
+                    for idx, row in enumerate(style_brief.get("relevant_reference_excerpts", []), 1):
+                        st.markdown(f"**Example {idx} · relevance {row.get('relevance_score', 0)}**")
+                        st.caption(
+                            "Structural inspiration only. Never copy reference wording."
+                        )
+                        st.text(str(row.get("excerpt") or "")[:1100])
+                st.button(
+                    "Next → Story & Script",
+                    type="primary",
+                    use_container_width=True,
+                    key="style_next_to_script",
+                    on_click=go_to_main_section,
+                    args=("✍️ Story & Script",),
+                )
+
+    # =========================================================
     # STORY & SCRIPT
     # =========================================================
 
     if main_section == "✍️ Story & Script":
         if not project:
             st.info("Create or choose an episode from Home first.")
+        elif not style_prepared_or_legacy(project):
+            st.warning(
+                "Step 00 is required for new stories. Prepare and save the "
+                "storytelling reference brief before writing the treatment."
+            )
+            st.button(
+                "Open Story Style & Research",
+                type="primary",
+                use_container_width=True,
+                on_click=go_to_main_section,
+                args=("📚 Story Style & Research",),
+                key="story_requires_style_gate",
+            )
         else:
             st.header(project["story_name"])
             st.caption(
@@ -2032,7 +2169,7 @@ with page_root.container():
                                         "long_form",
                                     )
                                     st.session_state.project_id = new_pid
-                                    st.session_state.main_section = "✍️ Story & Script"
+                                    st.session_state.main_section = "📚 Story Style & Research"
                                     st.session_state.pop("story_step", None)
                                     st.rerun()
 
