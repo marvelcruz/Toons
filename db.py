@@ -486,6 +486,7 @@ def load_private_style_corpus():
             .table("style_reference_sources")
             .select("source_text,source_name,updated_at")
             .eq("id", 1)
+            .eq("complete", True)
             .limit(1)
             .execute()
         )
@@ -507,6 +508,8 @@ def save_private_style_corpus(file_name, source_text):
                 "id": 1,
                 "source_name": str(file_name or "Uploaded transcripts")[:160],
                 "source_text": source_text,
+                "complete": True,
+                "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
             }, on_conflict="id"
         ).execute()
     )
