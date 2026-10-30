@@ -136,12 +136,13 @@ def _api_key_for(section):
 
 
 def _extract_json(text):
+    """Accept valid JSON or a single fenced JSON object from an AI provider."""
     text = (text or "").strip()
-    text = re.sub(r"^\`\`\`(?:json)?\\s*", "", text, flags=re.I)
-    text = re.sub(r"\\s*\`\`\`$", "", text)
+    text = re.sub(r"^\x60{3}(?:json)?\s*", "", text, flags=re.I)
+    text = re.sub(r"\s*\x60{3}$", "", text)
     try:
         return json.loads(text)
-    except Exception:
+    except (ValueError, TypeError):
         start = text.find("{")
         end = text.rfind("}")
         if start >= 0 and end > start:
@@ -2248,7 +2249,11 @@ def _fast_retention_json(system_prompt, user_prompt, *, task="review", progress=
     # All configured projects may be legitimate even if a particular API
     # request gets HTTP 400. Preserve project names and log Google categories,
     # not API keys or raw error bodies. Do not use fallbacks to bypass 429 quota.
-    entries = {entry["name"]: entry for entry in _api_keys()}
+    entries = {entry["name"]: entry for entry in _api_keys_for("retention")}
+    # Project B is a last-resort fallback, not a way around quota limits.
+    for entry in _api_keys():
+        if entry["name"] in {"GEMINI_API_KEY_B", "GEMINI_API_KEY_C", "GEMINI_API_KEY_D"}:
+            entries.setdefault(entry["name"], entry)
     preferred_name = (
         os.getenv("TOONSCRIPTURE_RETENTION_GEMINI_KEY", "GEMINI_API_KEY_D").strip()
         or "GEMINI_API_KEY_D"
