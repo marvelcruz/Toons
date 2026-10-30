@@ -21,3 +21,6 @@ jobs:
 
       - name: Check Python files
         run: python -m py_compile app.py db.py workflow.py prompt_composer.py story_catalog.py reference_library.py
+
+      - name: Test bounded retention reviews and script safety
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
