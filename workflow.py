@@ -136,12 +136,13 @@ def _api_key_for(section):
 
 
 def _extract_json(text):
+    """Accept valid JSON or a single fenced JSON object from an AI provider."""
     text = (text or "").strip()
-    text = re.sub(r"^\`\`\`(?:json)?\\s*", "", text, flags=re.I)
-    text = re.sub(r"\\s*\`\`\`$", "", text)
+    text = re.sub(r"^\x60{3}(?:json)?\s*", "", text, flags=re.I)
+    text = re.sub(r"\s*\x60{3}$", "", text)
     try:
         return json.loads(text)
-    except Exception:
+    except (ValueError, TypeError):
         start = text.find("{")
         end = text.rfind("}")
         if start >= 0 and end > start:
@@ -2138,9 +2139,10 @@ def draft_script(project_id):
 
 def _fast_retention_json(system_prompt, user_prompt, *, task="review", progress=None):
     """
-    Bounded one-provider-at-a-time calls for retention work.
+    Bounded, sequential provider fallback for retention work.
 
-    Free OpenRouter is tried once, then one Gemini backup key if needed.
+    OpenRouter is tried once; Gemini uses up to three configured
+    project/model routes when needed. Never rotate projects on HTTP 429.
     Other creative stages still use the full collaborative writers' room.
     """
     import requests
@@ -2244,23 +2246,44 @@ def _fast_retention_json(system_prompt, user_prompt, *, task="review", progress=
             errors.append(f"OpenRouter: {type(exc).__name__}: {str(exc)[:160]}")
             announce("OpenRouter could not complete; switching to one Gemini backup request.")
 
-    # The previous retention key C returned HTTP 400, so prefer the
-    # reserved Gemini key D. Allow an operator to explicitly select another.
-    gemini_keys = _api_keys_for("retention")
-    selected_name = (
+    # All configured projects may be legitimate even if a particular API
+    # request gets HTTP 400. Preserve project names and log Google categories,
+    # not API keys or raw error bodies. Do not use fallbacks to bypass 429 quota.
+    entries = {entry["name"]: entry for entry in _api_keys_for("retention")}
+    # Project B is a last-resort fallback, not a way around quota limits.
+    for entry in _api_keys():
+        if entry["name"] in {"GEMINI_API_KEY_B", "GEMINI_API_KEY_C", "GEMINI_API_KEY_D"}:
+            entries.setdefault(entry["name"], entry)
+    preferred_name = (
         os.getenv("TOONSCRIPTURE_RETENTION_GEMINI_KEY", "GEMINI_API_KEY_D").strip()
+        or "GEMINI_API_KEY_D"
     )
-    gemini_key = next(
-        (entry for entry in gemini_keys if entry["name"] == selected_name),
-        gemini_keys[0] if gemini_keys else None,
-    )
-    if gemini_key:
-        model = str(
-            os.getenv("TOONSCRIPTURE_RETENTION_GEMINI_MODEL")
-            or os.getenv("GEMINI_MODEL")
-            or "gemini-3.8-flash"
-        ).strip().removeprefix("models/")
-        announce(f"Trying {gemini_key['name']} once (no model cycling).")
+    primary_model = str(
+        os.getenv("TOONSCRIPTURE_RETENTION_GEMINI_MODEL")
+        or os.getenv("GEMINI_MODEL")
+        or "gemini-3.8-flash"
+    ).strip().removeprefix("models/")
+    compatible_model = str(
+        os.getenv("TOONSCRIPTURE_RETENTION_FALLBACK_MODEL", "gemini-3.5-flash-lite")
+        or "gemini-3.5-flash-lite"
+    ).strip().removeprefix("models/")
+
+    # Keep this strictly bounded. Project D is the spare. Project C remains
+    # the retention key. Project B is an emergency fallback only if both fail.
+    names = []
+    for name in (preferred_name, "GEMINI_API_KEY_C", "GEMINI_API_KEY_D", "GEMINI_API_KEY_B"):
+        if name in entries and name not in names:
+            names.append(name)
+        if len(names) >= 3:
+            break
+
+    for attempt_index, key_name in enumerate(names):
+        gemini_key = entries[key_name]
+        model = primary_model if attempt_index == 0 else compatible_model
+        announce(
+            f"Trying {key_name} with {model} "
+            f"({attempt_index + 1}/{len(names)} Gemini fallback options)."
+        )
         started = time.monotonic()
         try:
             response = requests.post(
@@ -2275,24 +2298,36 @@ def _fast_retention_json(system_prompt, user_prompt, *, task="review", progress=
                         {"role": "user", "parts": [{"text": user_prompt}]}
                     ],
                     "generationConfig": {
-                        "temperature": 0.15 if is_review else 0.25,
                         "responseMimeType": "application/json",
                         "maxOutputTokens": token_limit,
                         **({"thinkingConfig": {"thinkingLevel": "low"}}
                            if model.startswith(("gemini-3", "gemini-4")) else {}),
                     },
                 },
-                timeout=(8, gemini_timeout),
+                timeout=(8, gemini_timeout if attempt_index == 0 else 28),
             )
             if not response.ok:
+                category = _gemini_error_category(response)
                 record_ai_usage(
-                    project_name=gemini_key["name"], section_name=section,
-                    model_name=model, outcome="error",
+                    project_name=key_name,
+                    section_name=section,
+                    model_name=model,
+                    outcome="error",
                     http_status=response.status_code,
                 )
-                raise RuntimeError(
-                    f"HTTP {response.status_code} ({_gemini_error_category(response)})"
+                # Safe operational diagnostics: never log raw provider
+                # messages, request headers, secrets or story content.
+                announce(f"{key_name} returned HTTP {response.status_code} ({category}).")
+                errors.append(
+                    f"{key_name}/{model}: HTTP {response.status_code} ({category})"
                 )
+                if response.status_code == 429:
+                    raise RuntimeError(
+                        f"Gemini quota reached for {key_name}. "
+                        "Not switching projects to bypass a quota limit."
+                    )
+                continue
+
             data = response.json()
             candidates = data.get("candidates") or []
             parts = (candidates[0].get("content") or {}).get("parts") if candidates else []
@@ -2302,24 +2337,34 @@ def _fast_retention_json(system_prompt, user_prompt, *, task="review", progress=
             )
             parsed = validate(_extract_json(content))
             record_ai_usage(
-                project_name=gemini_key["name"], section_name=section,
+                project_name=key_name, section_name=section,
                 model_name=model, outcome="success", http_status=200,
             )
-            announce(f"Gemini finished in {time.monotonic() - started:.1f}s.")
+            announce(f"Gemini finished through {key_name} in {time.monotonic() - started:.1f}s.")
             return parsed
-        except (requests.RequestException, ValueError, RuntimeError, KeyError, TypeError) as exc:
-            if isinstance(exc, requests.Timeout):
-                outcome = "timeout"
-            elif isinstance(exc, (ValueError, KeyError, TypeError)):
-                outcome = "invalid_json"
-            else:
-                outcome = "error"
-            if outcome != "error":
-                record_ai_usage(
-                    project_name=gemini_key["name"], section_name=section,
-                    model_name=model, outcome=outcome, http_status=None,
-                )
-            errors.append(f"Gemini: {type(exc).__name__}: {str(exc)[:160]}")
+
+        except requests.Timeout:
+            record_ai_usage(
+                project_name=key_name, section_name=section,
+                model_name=model, outcome="timeout", http_status=None,
+            )
+            errors.append(f"{key_name}/{model}: timeout")
+            announce(f"{key_name} timed out. Trying a different configured route.")
+        except requests.RequestException:
+            record_ai_usage(
+                project_name=key_name, section_name=section,
+                model_name=model, outcome="network_error", http_status=None,
+            )
+            errors.append(f"{key_name}/{model}: network error")
+            announce(f"{key_name} had a network error. Trying another route.")
+        except (ValueError, KeyError, TypeError) as exc:
+            record_ai_usage(
+                project_name=key_name, section_name=section,
+                model_name=model, outcome="invalid_json", http_status=None,
+            )
+            errors.append(f"{key_name}/{model}: invalid JSON ({type(exc).__name__})")
+            announce(f"{key_name} returned unusable JSON. Trying another route.")
+
     if not errors:
         raise RuntimeError("No OpenRouter or Gemini retention provider is configured.")
     raise RuntimeError(

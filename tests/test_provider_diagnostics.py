@@ -97,5 +97,55 @@ class ProviderDiagnosticsTests(unittest.TestCase):
         self.assertEqual(api.call_count, 1)
 
 
+    def test_fallback_uses_compatible_model_after_overload(self):
+        busy = self._response(503, {
+            "error": {"status": "UNAVAILABLE", "message": "Model overloaded."}
+        })
+        success = self._response(200, {
+            "candidates": [{"content": {"parts": [
+                {"text": '{"score_100": 81, "strengths": [], "problems": []}'}
+            ]}}]
+        })
+        keys = [
+            {"name": "GEMINI_API_KEY_D", "value": "d"},
+            {"name": "GEMINI_API_KEY_C", "value": "c"},
+        ]
+        with (
+            patch.object(workflow, "_openrouter_keys", return_value=[]),
+            patch.object(workflow, "_api_keys_for", return_value=keys),
+            patch.object(workflow, "_api_keys", return_value=keys),
+            patch.object(workflow, "record_ai_usage"),
+            patch("requests.post", side_effect=[busy, success]) as api,
+        ):
+            output = workflow._fast_retention_json("system", "prompt")
+        self.assertEqual(output["score_100"], 81)
+        self.assertEqual(api.call_count, 2)
+        self.assertIn("gemini-3.8-flash", api.call_args_list[0].args[0])
+        self.assertIn("gemini-3.5-flash-lite", api.call_args_list[1].args[0])
+
+    def test_quota_error_does_not_rotate_gemini_projects(self):
+        quota = self._response(429, {
+            "error": {"status": "RESOURCE_EXHAUSTED", "message": "Quota exceeded"}
+        })
+        keys = [
+            {"name": "GEMINI_API_KEY_D", "value": "d"},
+            {"name": "GEMINI_API_KEY_C", "value": "c"},
+        ]
+        with (
+            patch.object(workflow, "_openrouter_keys", return_value=[]),
+            patch.object(workflow, "_api_keys_for", return_value=keys),
+            patch.object(workflow, "_api_keys", return_value=keys),
+            patch.object(workflow, "record_ai_usage"),
+            patch("requests.post", return_value=quota) as api,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Not switching projects"):
+                workflow._fast_retention_json("system", "prompt")
+        self.assertEqual(api.call_count, 1)
+
+    def test_fenced_json_parser_accepts_markdown_wrapping(self):
+        raw = chr(96) * 3 + 'json\n{"score_100": 90}\n' + chr(96) * 3
+        self.assertEqual(workflow._extract_json(raw)["score_100"], 90)
+
+
 if __name__ == "__main__":
     unittest.main()
