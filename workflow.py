@@ -3170,38 +3170,116 @@ def narration_text(project_id):
     return "\n\n".join(part for part in parts if part)
 
 
-def list_tts_voices():
+# Gemini's published prebuilt studio voices are stable identifiers. They should
+# never depend on a dynamic API listing call or the selected project's quota.
+GEMINI_PREBUILT_VOICES = (
+    ("Zephyr", "Bright"),
+    ("Puck", "Upbeat"),
+    ("Charon", "Informative"),
+    ("Kore", "Firm"),
+    ("Fenrir", "Excitable"),
+    ("Leda", "Youthful"),
+    ("Orus", "Firm"),
+    ("Aoede", "Breezy"),
+    ("Callirrhoe", "Easy-going"),
+    ("Autonoe", "Bright"),
+    ("Enceladus", "Breathy"),
+    ("Iapetus", "Clear"),
+    ("Umbriel", "Easy-going"),
+    ("Algieba", "Smooth"),
+    ("Despina", "Smooth"),
+    ("Erinome", "Clear"),
+    ("Algenib", "Gravelly"),
+    ("Rasalgethi", "Informative"),
+    ("Laomedeia", "Upbeat"),
+    ("Achernar", "Soft"),
+    ("Alnilam", "Firm"),
+    ("Schedar", "Even"),
+    ("Gacrux", "Mature"),
+    ("Pulcherrima", "Forward"),
+    ("Achird", "Friendly"),
+    ("Zubenelgenubi", "Casual"),
+    ("Vindemiatrix", "Gentle"),
+    ("Sadachbia", "Lively"),
+    ("Sadaltager", "Knowledgeable"),
+    ("Sulafat", "Warm"),
+)
+
+
+def list_tts_voices(include_extended=False):
+    """Show all 30 published prebuilt voices, even if voice discovery is down.
+
+    Extended-library lookup is strictly opt-in. When requested, surface a
+    clear error rather than silently collapsing the menu to two voices.
+    """
+    prebuilt = [
+        {
+            "id": name,
+            "display_name": f"{name} · {character}",
+            "character": character,
+            "source": "prebuilt",
+        }
+        for name, character in GEMINI_PREBUILT_VOICES
+    ]
+    if not include_extended:
+        return prebuilt
+
     key, _ = _api_key_for("tts")
     if not key:
-        return [
-            {"id": "Algenib", "display_name": "Algenib"},
-            {"id": "Algieba", "display_name": "Algieba"},
-        ]
+        raise RuntimeError(
+            "The Gemini TTS project is not configured, so the extended voice "
+            "library cannot be loaded. All 30 prebuilt voices remain selectable."
+        )
 
     try:
         from google import genai
 
         client = genai.Client(api_key=key)
-        items = client.voices.list(page_size=200)
-
-        result = []
-        for voice in items:
+        page = client.voices.list(page_size=100)
+        seen = {entry["id"].lower() for entry in prebuilt}
+        # Keep the in-app dropdown manageable. The full catalogue can be
+        # browsed in AI Studio; don't request thousands of voices on every load.
+        extended = []
+        for voice in page:
             data = (
                 voice.model_dump()
                 if hasattr(voice, "model_dump")
                 else dict(voice)
             )
-            result.append(data)
-
-        return result or [
-            {"id": "Algenib", "display_name": "Algenib"},
-            {"id": "Algieba", "display_name": "Algieba"},
-        ]
-    except Exception:
-        return [
-            {"id": "Algenib", "display_name": "Algenib"},
-            {"id": "Algieba", "display_name": "Algieba"},
-        ]
+            if not isinstance(data, dict):
+                continue
+            voice_id = str(
+                data.get("id")
+                or data.get("voice_id")
+                or data.get("name")
+                or ""
+            ).strip()
+            if not voice_id or voice_id.lower() in seen:
+                continue
+            display = str(
+                data.get("display_name")
+                or data.get("displayName")
+                or voice_id
+            ).strip()
+            extended.append({
+                "id": voice_id,
+                "display_name": f"{display} · Extended",
+                "source": "extended",
+            })
+            seen.add(voice_id.lower())
+            if len(extended) >= 100:
+                break
+        if not extended:
+            raise RuntimeError(
+                "Google returned no additional voices for this TTS project."
+            )
+        return prebuilt + extended
+    except Exception as exc:
+        raise RuntimeError(
+            "Google's extended voice library could not be loaded for this "
+            f"project ({type(exc).__name__}). The 30 prebuilt voices remain "
+            "available; extended voices can be browsed in Google AI Studio."
+        ) from exc
 
 
 def generate_tts_bytes(
