@@ -1,6 +1,7 @@
 import json
 import io
 import wave
+from html import escape
 import streamlit as st
 
 from db import (
@@ -67,61 +68,473 @@ st.set_page_config(
     layout="wide",
 )
 
-# Regional OS-inspired workspace shell:
-# quiet chrome, persistent project context, one obvious production line.
+# ToonScripture Studio OS — presentation styles only.
+# All story, AI, persistence and production logic remains unchanged.
 st.markdown(
     """
     <style>
-    .block-container {
-        max-width: 1280px;
-        padding-top: 1.4rem;
-        padding-bottom: 4rem;
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700;750&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+    :root {
+        --ts-ink: #202737;
+        --ts-muted: #788294;
+        --ts-bg: #f7f8fb;
+        --ts-paper: #ffffff;
+        --ts-line: #e5e9f0;
+        --ts-brand: #5066a9;
+        --ts-navy: #161c2a;
     }
+    html, body, [class*="css"], [data-testid="stApp"] {
+        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    [data-testid="stAppViewContainer"],
+    .stApp,
+    [data-testid="stMain"] {
+        background: var(--ts-bg);
+        color: var(--ts-ink);
+    }
+    [data-testid="stHeader"] {
+        background: transparent !important;
+    }
+    .block-container {
+        max-width: 1320px;
+        padding-top: 2rem !important;
+        padding-bottom: 5rem !important;
+        padding-left: clamp(1.5rem, 4vw, 3.75rem) !important;
+        padding-right: clamp(1.5rem, 4vw, 3.75rem) !important;
+    }
+    h1, h2, h3, h4,
+    [data-testid="stHeadingWithActionElements"] {
+        font-family: 'Manrope', 'DM Sans', sans-serif;
+        color: var(--ts-ink);
+        letter-spacing: -.035em;
+    }
+    h1 { font-size: clamp(2.15rem, 4vw, 3.05rem) !important; font-weight: 800 !important; line-height: 1.16 !important; }
+    h2 { font-size: 1.55rem !important; font-weight: 750 !important; }
+    h3 { font-size: 1.22rem !important; font-weight: 750 !important; }
+    [data-testid="stMain"] [data-testid="stMarkdownContainer"] p {
+        line-height: 1.7;
+    }
+    [data-testid="stMain"] [data-testid="stCaptionContainer"],
+    [data-testid="stMain"] small {
+        color: var(--ts-muted);
+    }
+    [data-testid="stMain"] hr { border-color: #e8ebf1; margin: 1.45rem 0 !important; }
+
+    /* Persistent dark studio navigation */
     [data-testid="stSidebar"] {
-        border-right: 1px solid rgba(128,128,128,.16);
+        background: var(--ts-navy) !important;
+        border-right: 1px solid #252d40 !important;
+        min-width: 245px;
+    }
+    [data-testid="stSidebar"] > div {
+        background: var(--ts-navy) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+        padding: 1.9rem 1.05rem 2rem !important;
     }
     [data-testid="stSidebar"] .block-container {
-        padding-top: 1rem;
+        padding: 1rem !important;
     }
-    div[data-testid="stMetric"] {
-        border: 1px solid rgba(128,128,128,.16);
-        border-radius: 14px;
-        padding: 12px 14px;
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {
+        color: #f5f7ff !important;
+    }
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+        color: #a8b1c5 !important;
+    }
+    [data-testid="stSidebar"] hr {
+        border-color: #303748 !important;
+        margin: 1.15rem 0 !important;
+    }
+    .ts-brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: .12rem 0 2rem;
+        color: #f7f8ff;
+    }
+    .ts-brand-icon {
+        display: grid;
+        place-items: center;
+        width: 38px;
+        height: 38px;
+        font-size: 1.2rem;
+        font-weight: 800;
+        color: #273a77;
+        background: #dce3ff;
+        border-radius: 12px;
+        box-shadow: 0 5px 15px #00000020;
+    }
+    .ts-brand-wordmark {
+        font-family: 'Manrope', sans-serif;
+        font-size: 1.05rem;
+        font-weight: 800;
+        letter-spacing: -.05em;
+        line-height: 1.35;
+    }
+    .ts-brand-wordmark span {
+        color: #8996b2;
+        font-weight: 550;
+    }
+    .ts-brand-tagline {
+        font-size: .65rem;
+        color: #8995b1;
+        letter-spacing: .105em;
+        text-transform: uppercase;
+        margin-top: 3px;
+    }
+    .ts-nav-label {
+        margin: 1.55rem 0 .7rem;
+        padding: 0 .65rem;
+        font-size: .65rem;
+        color: #77849e;
+        letter-spacing: .16em;
+        font-weight: 800;
+    }
+    [data-testid="stSidebar"] .stButton > button {
+        display: flex;
+        justify-content: flex-start;
+        background: transparent !important;
+        border: 1px solid transparent !important;
+        color: #aab5c9 !important;
+        border-radius: 10px !important;
+        padding: .67rem .83rem !important;
+        margin: .12rem 0;
+        font-size: .8rem;
+        font-weight: 570;
+        box-shadow: none !important;
+        min-height: 2.55rem;
+        transition: background .15s ease, color .15s ease;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background: #252e40 !important;
+        color: #fff !important;
+    }
+    [data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background: #333f5b !important;
+        color: #fff !important;
+        border-left: 3px solid #a9b9ef !important;
+        font-weight: 700;
+    }
+    [data-testid="stSidebar"] .stButton > button p {
+        color: inherit !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        background: #1d2535 !important;
+        border: 1px solid #313a50 !important;
+        border-radius: 11px !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary,
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary p {
+        color: #c9d3e6 !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stProgress"] [role="progressbar"] {
+        background: #a6b8f5 !important;
+    }
+    [data-testid="stSidebar"] .ts-projectbar {
+        background: #222b3d;
+        border: 1px solid #33405b;
+        box-shadow: none;
+    }
+    [data-testid="stSidebar"] .ts-projectbar strong { color: #f3f6fc; }
+    [data-testid="stSidebar"] .ts-projectbar .ts-muted { color: #a1aec8; }
+
+    /* Topbar, workspace heading, project context */
+    .ts-topline {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        padding: .25rem 0 1.25rem;
+        margin-bottom: 1.95rem;
+        border-bottom: 1px solid var(--ts-line);
+        color: #919bac;
+        font-size: .66rem;
+        letter-spacing: .14em;
+        font-weight: 750;
+    }
+    .ts-topline-right {
+        display: inline-flex;
+        align-items: center;
+        gap: .55rem;
+        color: #637d6d;
+        white-space: nowrap;
+    }
+    .ts-signal {
+        width: 7px;
+        height: 7px;
+        background: #67a686;
+        border-radius: 50%;
+        display: inline-block;
     }
     .ts-eyebrow {
-        font-size: .78rem;
-        opacity: .62;
+        color: var(--ts-brand);
+        font-size: .7rem;
+        font-weight: 800;
+        letter-spacing: .17em;
         text-transform: uppercase;
-        letter-spacing: .08em;
-        margin-bottom: .2rem;
+        margin: .2rem 0 .55rem;
     }
     .ts-projectbar {
-        border: 1px solid rgba(128,128,128,.18);
-        border-radius: 16px;
-        padding: 14px 16px;
-        margin: .25rem 0 1rem 0;
+        padding: 1.05rem 1.22rem;
+        background: var(--ts-paper);
+        border: 1px solid var(--ts-line);
+        border-radius: 13px;
+        margin: 1rem 0 1.65rem;
+        box-shadow: 0 6px 24px #27395a05;
     }
     .ts-projectbar strong {
-        font-size: 1.04rem;
+        font-size: 1rem;
+        font-weight: 750;
+        color: var(--ts-ink);
     }
-    .ts-next {
-        border: 1px solid rgba(128,128,128,.18);
-        border-radius: 18px;
-        padding: 18px 20px;
-        margin: .5rem 0 1rem 0;
-    }
-    .ts-next-title {
-        font-size: 1.15rem;
-        font-weight: 700;
-        margin-bottom: .25rem;
+    .ts-main-project {
+        border-left: 3px solid #7e93cb;
     }
     .ts-muted {
-        opacity: .68;
-        font-size: .9rem;
+        font-size: .78rem;
+        color: #8893a5;
+        line-height: 1.8;
     }
-    hr {
-        margin-top: 1.2rem !important;
-        margin-bottom: 1.2rem !important;
+
+    /* Signature dashboard */
+    .ts-hero {
+        min-height: 232px;
+        position: relative;
+        display: flex;
+        align-items: center;
+        overflow: hidden;
+        margin: 1.55rem 0 1.85rem;
+        padding: clamp(1.55rem, 3vw, 2.65rem);
+        border-radius: 19px;
+        color: #fff;
+        background: radial-gradient(circle at 85% 46%, #536590 0%, #35405d 25%, transparent 49%), linear-gradient(110deg, #1b2435, #252e44);
+        box-shadow: 0 18px 45px #2b334b19;
+    }
+    .ts-hero::before {
+        content: "";
+        position: absolute;
+        width: 260px;
+        height: 260px;
+        right: 3%;
+        top: -8px;
+        border: 1px solid #d5ddf24d;
+        border-radius: 50%;
+        box-shadow: 0 0 0 29px #b3c2ef12, 0 0 0 70px #b3c2ef09, 0 0 0 111px #b3c2ef06;
+        pointer-events: none;
+    }
+    .ts-hero::after {
+        content: "";
+        position: absolute;
+        width: 110px;
+        height: 171px;
+        right: 13%;
+        top: 38px;
+        transform: rotate(-18deg);
+        border: 1px solid #e3e7ff66;
+        border-radius: 56% 56% 14% 14%;
+        background: linear-gradient(115deg, #ffffff0b, #c6d2f12b, #ffffff08);
+        pointer-events: none;
+    }
+    .ts-hero-content { position: relative; z-index: 1; max-width: 65%; }
+    .ts-hero-kicker {
+        font-size: .66rem;
+        letter-spacing: .18em;
+        font-weight: 750;
+        color: #bdc9e9;
+    }
+    .ts-hero h2 {
+        color: #fff !important;
+        font-size: clamp(1.8rem, 3.3vw, 2.8rem) !important;
+        margin: 1rem 0 .65rem !important;
+        line-height: 1.15 !important;
+        letter-spacing: -.048em !important;
+    }
+    .ts-hero p { color: #bfc9dd; font-size: .85rem; line-height: 1.7; margin: 0; }
+    .ts-section-heading {
+        margin: 2rem 0 .9rem;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+    .ts-section-heading h3 {
+        font-size: 1.1rem;
+        font-weight: 800;
+        margin: 0;
+        letter-spacing: -.035em;
+    }
+    .ts-section-heading span {
+        color: #8893a4;
+        font-size: .72rem;
+    }
+    .ts-next {
+        position: relative;
+        background: #fff;
+        border: 1px solid #e2e6ee;
+        border-radius: 13px;
+        padding: 1.45rem 1.5rem;
+        margin: .7rem 0;
+        box-shadow: 0 5px 20px #29354d05;
+    }
+    .ts-next::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 1.6rem;
+        bottom: 1.6rem;
+        width: 3px;
+        border-radius: 3px;
+        background: #7285c0;
+    }
+    .ts-next-title {
+        font-family: 'Manrope', sans-serif;
+        font-size: 1.15rem;
+        font-weight: 750;
+        color: #252c3c;
+        letter-spacing: -.035em;
+        margin: .35rem 0;
+    }
+    div[data-testid="stMetric"] {
+        background: #fff;
+        border: 1px solid var(--ts-line);
+        border-radius: 13px;
+        padding: 1.15rem 1.35rem !important;
+        box-shadow: 0 6px 20px #2e3e5d05;
+        min-height: 115px;
+    }
+    div[data-testid="stMetric"] [data-testid="stMetricLabel"] {
+        color: #7f8a9a;
+        font-size: .78rem;
+        font-weight: 600;
+    }
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+        color: var(--ts-ink);
+        font-family: 'Manrope', sans-serif;
+        font-size: 2.05rem !important;
+        font-weight: 800;
+        letter-spacing: -.05em;
+    }
+    .ts-episode-title {
+        font-family: 'Manrope', sans-serif;
+        font-size: .95rem;
+        font-weight: 750;
+        line-height: 1.45;
+        min-height: 2.6rem;
+        color: #242d40;
+        margin: .65rem 0 .7rem;
+    }
+    .ts-episode-kicker {
+        font-size: .65rem;
+        letter-spacing: .14em;
+        color: #7786ac;
+        font-weight: 800;
+    }
+    .ts-episode-meta {
+        font-size: .72rem;
+        color: #8a94a7;
+        line-height: 1.7;
+    }
+    .ts-pipeline-grid {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0,1fr));
+        gap: .75rem;
+        padding: 1.25rem;
+        background: #fff;
+        border: 1px solid var(--ts-line);
+        border-radius: 13px;
+    }
+    .ts-pipeline-item { min-width: 0; }
+    .ts-step-number {
+        display: grid;
+        place-items: center;
+        width: 33px;
+        height: 33px;
+        border-radius: 10px;
+        background: #edf0f6;
+        color: #66758f;
+        font-weight: 800;
+        font-size: .76rem;
+        margin-bottom: .85rem;
+    }
+    .ts-pipeline-item.is-ready .ts-step-number {
+        background: #e2e9fa;
+        color: #4964a5;
+    }
+    .ts-step-label {
+        font-size: .73rem;
+        font-weight: 750;
+        color: #384359;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+    }
+    .ts-step-sub {
+        color: #9aa3b2;
+        font-size: .64rem;
+        margin-top: .2rem;
+    }
+    /* Production workspace: calm forms, readable writing, clear actions */
+    [data-testid="stMain"] .stButton > button[kind="primary"] {
+        background: #445b9a !important;
+        border-color: #445b9a !important;
+        color: #fff !important;
+        box-shadow: 0 5px 12px #354b8820;
+    }
+    [data-testid="stMain"] .stButton > button {
+        border-radius: 9px !important;
+        font-weight: 650;
+        min-height: 2.65rem;
+        transition: transform .14s ease, box-shadow .14s ease;
+    }
+    [data-testid="stMain"] .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 5px 13px #222d4812;
+    }
+    [data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+        border-radius: 13px !important;
+    }
+    [data-testid="stMain"] [data-testid="stExpander"] {
+        background: #fff;
+        border-color: var(--ts-line);
+        border-radius: 11px;
+    }
+    [data-testid="stMain"] [data-testid="stTextInput"] input,
+    [data-testid="stMain"] [data-testid="stTextArea"] textarea,
+    [data-testid="stMain"] [data-baseweb="select"] > div {
+        border-radius: 9px !important;
+    }
+    [data-testid="stMain"] [role="radiogroup"] {
+        background: #fff;
+        border: 1px solid var(--ts-line);
+        border-radius: 10px;
+        padding: .7rem .85rem;
+    }
+    [data-testid="stMain"] [data-testid="stAlert"] {
+        border-radius: 11px;
+    }
+    [data-testid="stMain"] [data-testid="stProgress"] {
+        border-radius: 99px;
+    }
+    @media (max-width: 850px) {
+        .ts-pipeline-grid { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1.15rem; }
+        .ts-hero-content { max-width: 78%; }
+        .ts-hero::before { right: -120px; }
+        .ts-hero::after { right: -20px; }
+        .ts-topline { font-size: .57rem; }
+    }
+    @media (max-width: 550px) {
+        .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
+        .ts-topline-right { display: none; }
+        .ts-hero { min-height: 190px; padding: 1.45rem; }
+        .ts-hero-content { max-width: 93%; }
+        .ts-hero h2 { font-size: 1.8rem !important; }
+        .ts-hero::before, .ts-hero::after { opacity: .23; }
+        .ts-pipeline-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+        .ts-section-heading { align-items: flex-start; flex-direction: column; gap: .25rem; }
     }
     </style>
     """,
@@ -313,8 +726,18 @@ def current_project():
 # =========================================================
 
 with st.sidebar:
-    st.markdown("## ToonScripture")
-    st.caption("Production OS")
+    st.markdown(
+        """
+        <div class="ts-brand-lockup">
+            <div class="ts-brand-icon">✦</div>
+            <div>
+                <div class="ts-brand-wordmark">toonScripture <span>OS</span></div>
+                <div class="ts-brand-tagline">Creative production studio</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     project = current_project()
 
@@ -338,7 +761,10 @@ with st.sidebar:
     else:
         st.caption("No active episode.")
 
-    st.markdown("### Production line")
+    st.markdown(
+        '<div class="ts-nav-label">WORKSPACE</div>',
+        unsafe_allow_html=True,
+    )
 
     if st.button(
         "⌂  Dashboard",
@@ -348,6 +774,11 @@ with st.sidebar:
     ):
         st.session_state.main_section = "🏠 Home"
         st.rerun()
+
+    st.markdown(
+        '<div class="ts-nav-label">CREATIVE STUDIO</div>',
+        unsafe_allow_html=True,
+    )
 
     stage_labels = {
         "✍️ Story & Script": "01  Story & Script",
@@ -370,6 +801,10 @@ with st.sidebar:
 
     st.divider()
 
+    st.markdown(
+        '<div class="ts-nav-label">LIBRARY & TOOLS</div>',
+        unsafe_allow_html=True,
+    )
     utility_left, utility_right = st.columns(2)
     with utility_left:
         if st.button(
@@ -811,9 +1246,39 @@ page_names = {
     "🗃️ Archive": "Archive",
 }
 
-st.markdown('<div class="ts-eyebrow">ToonScripture OS</div>', unsafe_allow_html=True)
-st.title(page_names.get(main_section, "Workspace"))
-
+section_kickers = {
+    "🏠 Home": "YOUR CREATIVE WORKSPACE",
+    "📋 Story Checklist": "THE STORY LIBRARY",
+    "✍️ Story & Script": "DEVELOPMENT STUDIO",
+    "🎨 Visual Bible": "WORLD BUILDING",
+    "🎙️ Audio": "SOUND & NARRATION",
+    "🎞️ Scene Production": "CINEMATIC PRODUCTION",
+    "📺 YouTube": "PUBLISHING STUDIO",
+    "📦 Export": "DELIVERY",
+    "🗃️ Archive": "YOUR LIBRARY",
+}
+section_descriptions = {
+    "🏠 Home": "Every story, every scene, one connected creative process.",
+    "📋 Story Checklist": "Keep your Bible story catalogue organised and your production plans on track.",
+    "✍️ Story & Script": "Shape the narrative, collaborate with your writers' room, and refine each script.",
+    "🎨 Visual Bible": "Design a consistent world of characters, locations, costumes, and props.",
+    "🎙️ Audio": "Build the voice and atmosphere for your episode.",
+    "🎞️ Scene Production": "Bring the script to life, one cinematic scene at a time.",
+    "📺 YouTube": "Prepare the story for its audience.",
+    "📦 Export": "Collect everything your production needs.",
+    "🗃️ Archive": "Revisit stories that have already passed through your studio.",
+}
+st.markdown(
+    '<div class="ts-topline"><span>TOONSCRIPTURE &nbsp;/&nbsp; STUDIO OS</span>'
+    '<span class="ts-topline-right"><span class="ts-signal"></span> PRODUCTION WORKSPACE</span></div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f'<div class="ts-eyebrow">{section_kickers.get(main_section, "THE STUDIO")}</div>',
+    unsafe_allow_html=True,
+)
+st.title("Production overview." if main_section == "🏠 Home" else page_names.get(main_section, "Workspace"))
+st.caption(section_descriptions.get(main_section, ""))
 if project:
     done, total = project_progress(project)
     header_treatment = load_json(project, "treatment_json", {})
@@ -829,7 +1294,7 @@ if project:
 
     st.markdown(
         f"""
-        <div class="ts-projectbar">
+        <div class="ts-projectbar ts-main-project">
             <strong>{project['story_name']}</strong><br>
             <span class="ts-muted">
                 {project.get('bible_reference') or 'Bible reference not set'}
@@ -858,14 +1323,50 @@ with page_root.container():
     # =========================================================
 
     if main_section == "🏠 Home":
+        st.markdown(
+            """
+            <section class="ts-hero">
+                <div class="ts-hero-content">
+                    <div class="ts-hero-kicker">YOUR CREATIVE WORKSPACE</div>
+                    <h2>Bring scripture<br>to the screen.</h2>
+                    <p>Develop stories, shape their visual world and guide each
+                    production from the first idea to its final export.</p>
+                </div>
+            </section>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        summary = catalog_summary()
+        active_projects = [
+            p for p in list_projects()
+            if (p.get("status") or "") != "archived"
+        ]
+
+        st.markdown(
+            '<div class="ts-section-heading"><h3>Studio at a glance</h3>'
+            '<span>Live production overview</span></div>',
+            unsafe_allow_html=True,
+        )
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Active productions", len(active_projects))
+        metric_cols[1].metric("Catalogue entries", summary["people_total"])
+        metric_cols[2].metric("Story series", summary["series_total"])
+
         if project:
+            st.markdown(
+                '<div class="ts-section-heading"><h3>Continue where you left off</h3>'
+                '<span>Your next creative milestone</span></div>',
+                unsafe_allow_html=True,
+            )
             st.markdown(
                 f"""
                 <div class="ts-next">
-                    <div class="ts-eyebrow">Next action</div>
-                    <div class="ts-next-title">{next_step(project)}</div>
+                    <div class="ts-eyebrow">NEXT ACTION</div>
+                    <div class="ts-next-title">{escape(next_step(project))}</div>
                     <div class="ts-muted">
-                        Keep moving through the production line. Your episode stays in context.
+                        {escape(project['story_name'])} &nbsp;·&nbsp;
+                        {escape(str(project.get('bible_reference') or 'Bible reference not set'))}
                     </div>
                 </div>
                 """,
@@ -887,29 +1388,86 @@ with page_root.container():
             if st.button(
                 "Continue production →",
                 type="primary",
-                use_container_width=True,
                 key="dashboard_continue",
             ):
                 st.session_state.main_section = next_destination
                 st.rerun()
 
-            st.divider()
+        if active_projects:
+            st.markdown(
+                '<div class="ts-section-heading"><h3>Your productions</h3>'
+                '<span>Pick up a story or switch episodes</span></div>',
+                unsafe_allow_html=True,
+            )
+            recent_columns = st.columns(min(3, len(active_projects)))
+            for i, episode in enumerate(active_projects[:3]):
+                with recent_columns[i]:
+                    with st.container(border=True):
+                        ep_done, ep_total = project_progress(episode)
+                        st.markdown(
+                            f'<div class="ts-episode-kicker">PRODUCTION {i + 1:02d}</div>'
+                            f'<div class="ts-episode-title">{escape(episode["story_name"])}</div>'
+                            f'<div class="ts-episode-meta">'
+                            f'{escape(str(episode.get("bible_reference") or "Reference not set"))}'
+                            f' &nbsp;·&nbsp; {escape(str(episode.get("target_minutes") or 0))} min'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.progress(
+                            ep_done / ep_total,
+                            text=f"{ep_done} of {ep_total} stages ready",
+                        )
+                        if st.button(
+                            "Open production ↗",
+                            use_container_width=True,
+                            key=f"dashboard_open_{episode['id']}",
+                        ):
+                            st.session_state.project_id = episode["id"]
+                            st.session_state.main_section = "✍️ Story & Script"
+                            st.rerun()
 
-        summary = catalog_summary()
+        st.markdown(
+            '<div class="ts-section-heading"><h3>The production pipeline</h3>'
+            '<span>Six connected creative stages</span></div>',
+            unsafe_allow_html=True,
+        )
+        stage_progress = [
+            ("Story & Script", bool(project and project.get("script_json")), "Develop"),
+            ("Visual Bible", bool(project and project.get("character_bible_json")), "Design"),
+            ("Narration", False, "Record"),
+            ("Scenes", bool(project and project.get("scenes_json")), "Produce"),
+            ("YouTube", bool(project and project.get("package_json")), "Package"),
+            ("Export", bool(project and project.get("package_json")), "Deliver"),
+        ]
+        stage_tiles = []
+        for index, (label, is_ready, caption) in enumerate(stage_progress, 1):
+            stage_tiles.append(
+                f'<div class="ts-pipeline-item {"is-ready" if is_ready else ""}">'
+                f'<div class="ts-step-number">{index:02d}</div>'
+                f'<div class="ts-step-label">{label}</div>'
+                f'<div class="ts-step-sub">{caption}</div>'
+                f'</div>'
+            )
+        st.markdown(
+            '<div class="ts-pipeline-grid">' + "".join(stage_tiles) + '</div>',
+            unsafe_allow_html=True,
+        )
 
+        st.markdown(
+            '<div class="ts-section-heading"><h3>Start something new</h3>'
+            '<span>Turn another Bible story into a production</span></div>',
+            unsafe_allow_html=True,
+        )
         if summary["people_total"] == 0:
-            st.markdown("## Add your story catalogue")
             st.write(
                 "Upload your ToonScripture planning spreadsheet once. "
-                "After that, the stories will live in the database and you will not need the spreadsheet for daily use."
+                "Your stories will then live in the database for daily use."
             )
-
             upload = st.file_uploader(
                 "Choose the planning spreadsheet",
                 type=["xlsx"],
                 key="catalog_upload",
             )
-
             if upload and st.button(
                 "Import my story catalogue",
                 type="primary",
@@ -917,25 +1475,18 @@ with page_root.container():
             ):
                 with st.spinner("Adding your stories to ToonScripture..."):
                     result = import_spreadsheet(upload.getvalue())
-
                 st.success(
                     f"Done. {result['people_total']} story/character entries "
                     f"and {result['series_total']} series were added."
                 )
                 st.rerun()
         else:
-            st.markdown("## Start something new")
-            st.caption(
-                "Episode creation stays on Home and never appears inside production pages."
-            )
             if st.button(
-                "Start a new episode",
+                "＋ Start a new episode",
                 type="primary",
-                use_container_width=True,
                 key="open_new_episode_dialog",
             ):
                 start_new_episode_dialog()
-
 
     project = (
         get_project(st.session_state.get("project_id"))
