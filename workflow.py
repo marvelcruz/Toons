@@ -24,6 +24,7 @@ from story_catalog import (
 from scene_planner import make_scene_plan
 from runtime_contract import (
     script_narration_text,
+    script_fingerprint,
     script_runtime_report,
     audio_runtime_report,
     runtime_label,
@@ -2217,6 +2218,11 @@ def draft_script(project_id):
     """
     generate_writer_room(project_id)
     room = synthesize_writer_room(project_id)
+    if room.get("status") != "master_ready":
+        raise RuntimeError(
+            "The generated script did not meet the requested episode runtime. "
+            "It is saved for correction in the writers' room, not approved."
+        )
     return room.get("final_script") or {}
 
 
@@ -2644,6 +2650,17 @@ def plan_scenes(project_id, progress=None):
         except (ValueError, TypeError):
             audio_seconds = 0
         if audio_seconds > 0:
+            recorded_fingerprint = (
+                metadata.get("script_fingerprint")
+                if isinstance(metadata, dict) else None
+            )
+            if recorded_fingerprint and recorded_fingerprint != script_fingerprint(script):
+                raise RuntimeError(
+                    "Scene Production paused: this narration was recorded "
+                    "from an older version of the script. Regenerate audio "
+                    "from the current script before building new scenes. "
+                    "Your existing scenes remain saved."
+                )
             audio_check = audio_runtime_report(
                 audio_seconds, p["target_minutes"]
             )
