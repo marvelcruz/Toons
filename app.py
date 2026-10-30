@@ -46,6 +46,7 @@ from workflow import (
     generate_writer_room,
     synthesize_writer_room,
     critique_script,
+    improve_script_once,
     build_character_bible,
     plan_scenes,
     make_package,
@@ -2179,7 +2180,13 @@ with page_root.container():
                     )
 
                     review_error = None
+                    if st.session_state.get("retention_last_outcome"):
+                        st.info(st.session_state.pop("retention_last_outcome"))
 
+                    st.caption(
+                        "Fast review: one AI evaluation, no automatic rewrites. "
+                        "You can request one targeted improvement afterward."
+                    )
                     if st.button(
                         "Review the script"
                         if not critique
@@ -2188,8 +2195,16 @@ with page_root.container():
                         use_container_width=True,
                     ):
                         try:
-                            with st.spinner("Reviewing the script..."):
-                                critique_script(project["id"])
+                            with st.status("Checking viewer retention", expanded=True) as review_status:
+                                result = critique_script(
+                                    project["id"],
+                                    progress=review_status.write,
+                                )
+                                review_status.update(
+                                    label=f"Review complete: {result.get('score_100', '?')}/100",
+                                    state="complete",
+                                    expanded=False,
+                                )
                             st.rerun()
                         except Exception as exc:
                             review_error = str(exc)
@@ -2312,25 +2327,40 @@ with page_root.container():
                             )
                         else:
                             st.caption(
-                                "The script has been improved automatically, but the honest critic "
-                                "still scored it below 95. Run the review again to continue improving it."
+                                "Your script has not yet reached 95/100. "
+                                "One improvement writes a revised draft, reviews it once, "
+                                "and keeps the original if the new score is lower."
                             )
                             if st.button(
-                                "Improve again toward 95+",
+                                "Improve once toward 95+",
                                 type="primary",
                                 use_container_width=True,
                                 key="improve_again_retention",
                             ):
                                 try:
-                                    with st.spinner(
-                                        "Improving the script and checking retention again..."
-                                    ):
-                                        critique_script(project["id"])
+                                    with st.status("Improving one draft", expanded=True) as improvement_status:
+                                        result = improve_script_once(
+                                            project["id"],
+                                            progress=improvement_status.write,
+                                        )
+                                        previous_score = int(float(critique.get("score_100", 0) or 0))
+                                        latest_score = int(float(result.get("score_100", 0) or 0))
+                                        if latest_score > previous_score:
+                                            message = f"Script improved from {previous_score} to {latest_score}/100."
+                                        else:
+                                            message = (
+                                                "The new draft did not score better, "
+                                                "so your original script was preserved."
+                                            )
+                                        improvement_status.update(
+                                            label=message, state="complete", expanded=False
+                                        )
+                                        st.session_state["retention_last_outcome"] = message
                                     st.rerun()
                                 except Exception as exc:
                                     st.error(
-                                        "The improvement pass could not finish right now. "
-                                        "Your best saved script is still safe."
+                                        "This improvement could not finish. "
+                                        "Your previously saved script and review are intact."
                                     )
                                     with st.expander("Technical details"):
                                         st.code(str(exc))
