@@ -143,9 +143,8 @@ class ProviderDiagnosticsTests(unittest.TestCase):
         self.assertEqual(api.call_count, 1)
 
     def test_fenced_json_parser_accepts_markdown_wrapping(self):
-        raw = "\\x60\\x60\\x60json\\n{\\"score_100\\": 90}\\n\\x60\\x60\\x60"
-        # The parser handles real backtick fences, not just bare JSON.
-        raw = raw.replace("\\x60", chr(96))
+        raw = chr(96) * 3 + 'json\n{"score_100": 90}\n' + chr(96) * 3
+        self.assertEqual(workflow._extract_json(raw)["score_100"], 90)
         self.assertEqual(workflow._extract_json(raw)["score_100"], 90)
 
 
