@@ -1292,18 +1292,19 @@ if project:
         else ""
     )
 
+    # Build one compact HTML string: Markdown otherwise treats the indented
+    # closing tag as a literal code block inside the project header.
+    project_meta = (
+        f"{escape(str(project.get('bible_reference') or 'Bible reference not set'))}"
+        f" &nbsp;·&nbsp; {escape(str(project.get('target_minutes', 0)))} min"
+        f" &nbsp;·&nbsp; {done}/{total} stages prepared"
+        f"{escape(researched_suffix)}"
+    )
     st.markdown(
-        f"""
-        <div class="ts-projectbar ts-main-project">
-            <strong>{project['story_name']}</strong><br>
-            <span class="ts-muted">
-                {project.get('bible_reference') or 'Bible reference not set'}
-                &nbsp;·&nbsp; {project.get('target_minutes', 0)} min
-                &nbsp;·&nbsp; {done}/{total} stages prepared
-                {researched_suffix}
-            </span>
-        </div>
-        """,
+        '<div class="ts-projectbar ts-main-project">'
+        f'<strong>{escape(str(project["story_name"]))}</strong>'
+        f'<div class="ts-muted">{project_meta}</div>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
