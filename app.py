@@ -2551,9 +2551,9 @@ with page_root.container():
                         f'<div class="ts-build-fill" style="width:{value}%"></div>'
                         '</div>'
                         '<div class="ts-build-help">'
-                        'Progress advances when each real AI generation pass finishes. '
-                        'The moving highlight means the current pass is still running, '
-                        'so the percentage may stay unchanged during a long request.'
+                        'Maximum processing budget: about 5 minutes. '
+                        'Progress advances as each AI pass completes. '
+                        'If a provider cannot finish, saved checkpoints let you resume.'
                         '</div></section>',
                         unsafe_allow_html=True,
                     )
@@ -2580,8 +2580,9 @@ with page_root.container():
                     )
                 else:
                     st.error(
-                        "The Visual Bible could not be created right now. "
-                        "Your episode and script are still saved."
+                        "The Visual Bible could not finish within its provider time budget. "
+                        "Your episode and script are safe; completed AI passes are "
+                        "saved as recoverable checkpoints when cloud storage is available."
                     )
 
                 with st.expander("Technical details"):
