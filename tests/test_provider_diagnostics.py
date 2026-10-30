@@ -145,7 +145,6 @@ class ProviderDiagnosticsTests(unittest.TestCase):
     def test_fenced_json_parser_accepts_markdown_wrapping(self):
         raw = chr(96) * 3 + 'json\n{"score_100": 90}\n' + chr(96) * 3
         self.assertEqual(workflow._extract_json(raw)["score_100"], 90)
-        self.assertEqual(workflow._extract_json(raw)["score_100"], 90)
 
 
 if __name__ == "__main__":
