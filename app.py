@@ -1434,7 +1434,7 @@ with page_root.container():
         stage_progress = [
             ("Story & Script", bool(project and project.get("script_json")), "Develop"),
             ("Visual Bible", bool(project and project.get("character_bible_json")), "Design"),
-            ("Narration", False, "Record"),
+            ("Narration", bool(project and list_project_assets(project["id"], "narration_audio")), "Record"),
             ("Scenes", bool(project and project.get("scenes_json")), "Produce"),
             ("YouTube", bool(project and project.get("package_json")), "Package"),
             ("Export", bool(project and project.get("package_json")), "Deliver"),
