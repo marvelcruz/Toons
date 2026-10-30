@@ -45,6 +45,7 @@ from workflow import (
     draft_script,
     generate_writer_room,
     synthesize_writer_room,
+    repair_master_runtime,
     critique_script,
     improve_script_once,
     diagnose_retention_connections,
@@ -63,6 +64,10 @@ from workflow import (
     review_scene_frame,
 )
 from prompt_composer import compose_scene_package, reference_summary
+from runtime_contract import (
+    script_runtime_report, audio_runtime_report, runtime_label,
+    script_fingerprint,
+)
 
 st.set_page_config(
     page_title="ToonScripture OS",
@@ -2184,7 +2189,38 @@ with page_root.container():
 
                         st.divider()
 
-                        if writer_room.get("status") != "master_ready":
+                        if writer_room.get("status") == "master_needs_runtime_repair":
+                            runtime = writer_room.get("runtime_report") or {}
+                            st.warning(
+                                f"The master writer delivered {runtime.get('word_count', 0):,} "
+                                f"spoken words. The episode needs about "
+                                f"{runtime.get('target_words', 0):,} "
+                                f"({runtime.get('min_words', 0):,}–"
+                                f"{runtime.get('max_words', 0):,}) to meet its "
+                                "requested duration. An automatic correction "
+                                "was attempted, but the length is still outside "
+                                "the approved range. The draft is preserved "
+                                "and cannot silently become a shorter episode."
+                            )
+                            show_script(writer_room.get("final_script") or {})
+                            if st.button(
+                                "Retry just the runtime correction",
+                                type="primary",
+                                use_container_width=True,
+                                key="retry_runtime_master",
+                            ):
+                                try:
+                                    with st.spinner(
+                                        "Correcting spoken duration without restarting the writers' room..."
+                                    ):
+                                        repair_master_runtime(project["id"])
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error("The correction could not finish. Your draft remains saved.")
+                                    with st.expander("Technical details"):
+                                        st.code(str(exc))
+
+                        elif writer_room.get("status") != "master_ready":
                             st.markdown("### Ready to combine the room?")
                             st.write(
                                 "The next pass will mine the strongest hook, structure, emotional beats, "
@@ -3168,14 +3204,33 @@ with page_root.container():
             )
 
             full_narration = narration_text(project["id"])
+            script_runtime = script_runtime_report(
+                load_json(project, "script_json", {}),
+                project["target_minutes"],
+            )
 
             if not full_narration:
                 st.info("The script does not contain narration yet.")
             else:
                 st.metric(
                     "Narration length",
-                    f"{len(full_narration.split()):,} words",
+                    f"{script_runtime['word_count']:,} words",
                 )
+                st.caption(
+                    f"Episode goal: {float(project['target_minutes']):g} min · "
+                    f"spoken script target: {script_runtime['target_words']:,} "
+                    f"words (acceptable {script_runtime['min_words']:,}–"
+                    f"{script_runtime['max_words']:,}). "
+                    "Estimate only; generated audio will be measured."
+                )
+                if not script_runtime["matches_target"]:
+                    st.error(
+                        f"The saved script is too {'short' if script_runtime['status'] == 'too_short' else 'long'} "
+                        "for the requested episode duration. "
+                        "Narration generation is paused to prevent another "
+                        "unintentionally short or long episode. "
+                        "Return to Story & Script to generate a runtime-matched master."
+                    )
 
                 with st.expander("Preview narration text"):
                     st.write(full_narration)
@@ -3245,6 +3300,7 @@ with page_root.container():
                     "Create narration audio",
                     type="primary",
                     use_container_width=True,
+                    disabled=not script_runtime["matches_target"],
                 ):
                     if not _api_key():
                         st.error("Connect AI from the sidebar first.")
@@ -3272,13 +3328,34 @@ with page_root.container():
                                     "word_count": len(
                                         full_narration.split()
                                     ),
+                                    "script_fingerprint": script_fingerprint(
+                                        load_json(project, "script_json", {})
+                                    ),
                                 },
                             )
 
                         st.session_state[
                             f"latest_audio_{project['id']}"
                         ] = audio_bytes
-                        st.success("Narration audio created and saved.")
+                        audio_result = audio_runtime_report(
+                            audio_duration_seconds(audio_bytes),
+                            project["target_minutes"],
+                        )
+                        if audio_result["matches_target"]:
+                            st.success(
+                                "Narration audio created and saved, and its measured "
+                                "duration matches the episode goal."
+                            )
+                        else:
+                            st.error(
+                                f"Narration was saved, but runs "
+                                f"{runtime_label(audio_result['actual_seconds'])} "
+                                f"instead of the requested "
+                                f"{runtime_label(audio_result['target_seconds'])}. "
+                                "Scene Production will not silently change the episode "
+                                "runtime. Adjust script pacing/voice direction and "
+                                "regenerate narration before full production."
+                            )
 
                 latest_audio = st.session_state.get(
                     f"latest_audio_{project['id']}"
@@ -3305,6 +3382,32 @@ with page_root.container():
                     if url and not latest_audio:
                         st.markdown("### Latest saved narration")
                         st.audio(url)
+
+                latest_audio_check = None
+                if saved_audio_files:
+                    last_meta = saved_audio_files[0].get("metadata_json") or {}
+                    if isinstance(last_meta, str):
+                        try:
+                            last_meta = json.loads(last_meta)
+                        except ValueError:
+                            last_meta = {}
+                    if isinstance(last_meta, dict) and last_meta.get("duration_seconds"):
+                        latest_audio_check = audio_runtime_report(
+                            last_meta["duration_seconds"],
+                            project["target_minutes"],
+                        )
+                        st.caption(
+                            f"Saved voiceover: "
+                            f"{runtime_label(latest_audio_check['actual_seconds'])} · "
+                            f"requested episode: "
+                            f"{runtime_label(latest_audio_check['target_seconds'])}"
+                        )
+                        if not latest_audio_check["matches_target"]:
+                            st.warning(
+                                "This voiceover is outside the episode runtime "
+                                "range, so the full scene plan must not use it "
+                                "as a replacement for your original target."
+                            )
 
                 if saved_audio_files or latest_audio:
                     st.divider()
