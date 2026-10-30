@@ -1998,104 +1998,297 @@ def draft_script(project_id):
     return room.get("final_script") or {}
 
 
-def critique_script(project_id, target_score=95, max_rewrite_rounds=2):
+def _fast_retention_json(system_prompt, user_prompt, *, task="review", progress=None):
     """
-    Review the script and enforce ToonScripture's retention quality gate.
+    Bounded one-provider-at-a-time calls for retention work.
 
-    If the honest review is below target_score, automatically rewrite the
-    complete script from the critique and review it again. We cap automatic
-    rewrites so one click cannot create an uncontrolled chain of API calls.
-    The best script/review found is saved even if the target is not reached.
+    Free OpenRouter is tried once, then one Gemini backup key if needed.
+    Other creative stages still use the full collaborative writers' room.
     """
-    p = get_project(project_id)
-    script = load_json(p, "script_json", {})
+    import requests
 
-    if not script:
-        raise RuntimeError("Write the script before running the retention review.")
+    is_review = task == "review"
+    token_limit = 2800 if is_review else 8000
+    openrouter_timeout = 55 if is_review else 80
+    gemini_timeout = 35 if is_review else 65
+    section = "retention"
+    errors = []
 
-    best_script = script
-    best_review = None
-    best_score = -1
-    attempts = []
+    def announce(message):
+        if progress:
+            progress(message)
+        print(f"[ToonScripture] retention {task}: {message}", flush=True)
 
-    for round_index in range(max_rewrite_rounds + 1):
-        treatment = load_json(p, "treatment_json", {})
-        accuracy_context = {
-            "primary_reference": p.get("bible_reference"),
-            "scriptural_anchor": treatment.get("scriptural_anchor", []),
-            "researched_scripture_references": treatment.get(
-                "researched_scripture_references",
-                [],
-            ),
-        }
+    def validate(value):
+        if not isinstance(value, dict):
+            raise ValueError("The AI returned JSON, but not an object.")
+        if is_review:
+            if "score_100" not in value:
+                raise ValueError("The retention review is missing its score.")
+            score = round(float(value["score_100"]))
+            if score < 0 or score > 100:
+                raise ValueError("The retention score is outside 0–100.")
+        elif not isinstance(value.get("sections"), list) or not value["sections"]:
+            raise ValueError("The rewritten script is missing its sections.")
+        return value
 
-        review = call_json(
-            CRITIQUE_SYSTEM,
-            (
-                "SCRIPTURAL ACCURACY CONTEXT:\n"
-                + json.dumps(accuracy_context, indent=2)
-                + "\n\nSCRIPT TO REVIEW:\n"
-                + json.dumps(best_script, indent=2)
-            ),
-            0.15,
-            section="retention",
-        )
-
+    key_entries = _openrouter_keys()
+    if key_entries:
+        key_entry = key_entries[0]
+        model = os.getenv(
+            "TOONSCRIPTURE_RETENTION_OPENROUTER_MODEL", "openrouter/free"
+        ).strip() or "openrouter/free"
+        announce("Trying OpenRouter's retention model (single bounded request).")
+        started = time.monotonic()
         try:
-            score = int(round(float(review.get("score_100", 0) or 0)))
-        except Exception:
-            score = 0
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key_entry['value']}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://toonscripture.onrender.com",
+                    "X-Title": "ToonScripture OS",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": user_prompt + "\n\nReturn one complete JSON object only.",
+                        },
+                    ],
+                    "temperature": 0.15 if is_review else 0.25,
+                    "max_tokens": token_limit,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=(8, openrouter_timeout),
+            )
+            routed_model = str(response.json().get("model") or model) if response.ok else model
+            if not response.ok:
+                record_ai_usage(
+                    project_name=key_entry["name"], section_name=section,
+                    model_name=routed_model, outcome="error",
+                    http_status=response.status_code,
+                )
+                raise RuntimeError(f"HTTP {response.status_code}")
+            data = response.json()
+            choices = data.get("choices") or []
+            if not choices:
+                raise ValueError("The model returned no choices.")
+            message = (choices[0] or {}).get("message") or {}
+            content = message.get("content") or ""
+            if isinstance(content, list):
+                content = "".join(
+                    str(part.get("text") or "") for part in content
+                    if isinstance(part, dict)
+                )
+            parsed = validate(_extract_json(str(content).strip()))
+            record_ai_usage(
+                project_name=key_entry["name"], section_name=section,
+                model_name=routed_model, outcome="success", http_status=200,
+            )
+            announce(f"OpenRouter finished in {time.monotonic() - started:.1f}s.")
+            return parsed
+        except (requests.RequestException, ValueError, RuntimeError, KeyError, TypeError) as exc:
+            if isinstance(exc, requests.Timeout):
+                outcome = "timeout"
+            elif isinstance(exc, (ValueError, KeyError, TypeError)):
+                outcome = "invalid_json"
+            else:
+                outcome = "error"
+            if outcome != "error":
+                record_ai_usage(
+                    project_name=key_entry["name"], section_name=section,
+                    model_name=model, outcome=outcome, http_status=None,
+                )
+            errors.append(f"OpenRouter: {type(exc).__name__}: {str(exc)[:160]}")
+            announce("OpenRouter could not complete; switching to one Gemini backup request.")
 
-        attempts.append({
-            "round": round_index + 1,
-            "score": score,
-        })
+    # The previous retention key C returned HTTP 400, so prefer the
+    # reserved Gemini key D. Allow an operator to explicitly select another.
+    gemini_keys = _api_keys_for("retention")
+    selected_name = (
+        os.getenv("TOONSCRIPTURE_RETENTION_GEMINI_KEY", "GEMINI_API_KEY_D").strip()
+    )
+    gemini_key = next(
+        (entry for entry in gemini_keys if entry["name"] == selected_name),
+        gemini_keys[0] if gemini_keys else None,
+    )
+    if gemini_key:
+        model = str(
+            os.getenv("TOONSCRIPTURE_RETENTION_GEMINI_MODEL")
+            or os.getenv("GEMINI_MODEL")
+            or "gemini-3.8-flash"
+        ).strip().removeprefix("models/")
+        announce(f"Trying {gemini_key['name']} once (no model cycling).")
+        started = time.monotonic()
+        try:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={
+                    "x-goog-api-key": gemini_key["value"],
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [
+                        {"role": "user", "parts": [{"text": user_prompt}]}
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.15 if is_review else 0.25,
+                        "responseMimeType": "application/json",
+                        "maxOutputTokens": token_limit,
+                    },
+                },
+                timeout=(8, gemini_timeout),
+            )
+            if not response.ok:
+                record_ai_usage(
+                    project_name=gemini_key["name"], section_name=section,
+                    model_name=model, outcome="error",
+                    http_status=response.status_code,
+                )
+                raise RuntimeError(f"HTTP {response.status_code}")
+            data = response.json()
+            candidates = data.get("candidates") or []
+            parts = (candidates[0].get("content") or {}).get("parts") if candidates else []
+            content = "".join(
+                str(part.get("text") or "") for part in (parts or [])
+                if isinstance(part, dict)
+            )
+            parsed = validate(_extract_json(content))
+            record_ai_usage(
+                project_name=gemini_key["name"], section_name=section,
+                model_name=model, outcome="success", http_status=200,
+            )
+            announce(f"Gemini finished in {time.monotonic() - started:.1f}s.")
+            return parsed
+        except (requests.RequestException, ValueError, RuntimeError, KeyError, TypeError) as exc:
+            if isinstance(exc, requests.Timeout):
+                outcome = "timeout"
+            elif isinstance(exc, (ValueError, KeyError, TypeError)):
+                outcome = "invalid_json"
+            else:
+                outcome = "error"
+            if outcome != "error":
+                record_ai_usage(
+                    project_name=gemini_key["name"], section_name=section,
+                    model_name=model, outcome=outcome, http_status=None,
+                )
+            errors.append(f"Gemini: {type(exc).__name__}: {str(exc)[:160]}")
+    if not errors:
+        raise RuntimeError("No OpenRouter or Gemini retention provider is configured.")
+    raise RuntimeError(
+        "No AI provider completed this bounded retention request. "
+        + " | ".join(errors)
+    )
 
-        if score > best_score:
-            best_score = score
-            best_review = review
 
-        if score >= target_score:
-            break
+def _retention_review_for(project, script, *, progress=None):
+    treatment = load_json(project, "treatment_json", {})
+    accuracy_context = {
+        "primary_reference": project.get("bible_reference"),
+        "scriptural_anchor": treatment.get("scriptural_anchor", []),
+        "researched_scripture_references": treatment.get(
+            "researched_scripture_references", []
+        ),
+    }
+    return _fast_retention_json(
+        CRITIQUE_SYSTEM,
+        "SCRIPTURAL ACCURACY CONTEXT:\n"
+        + json.dumps(accuracy_context, ensure_ascii=False, separators=(",", ":"))
+        + "\n\nSCRIPT TO REVIEW:\n"
+        + json.dumps(script, ensure_ascii=False, separators=(",", ":")),
+        task="review",
+        progress=progress,
+    )
 
-        if round_index >= max_rewrite_rounds:
-            break
 
-        rewrite_prompt = f"""
-TARGET RUNTIME: {p['target_minutes']} minutes
-QUALITY TARGET: {target_score}/100 or better
+def _score_retention(review):
+    score = round(float(review["score_100"]))
+    if not 0 <= score <= 100:
+        raise ValueError("The critic returned an out-of-range score.")
+    return score
 
-CURRENT SCRIPT:
-{json.dumps(best_script, indent=2)}
 
-RETENTION REVIEW:
-{json.dumps(review, indent=2)}
+def critique_script(project_id, target_score=95, max_rewrite_rounds=0, progress=None):
+    """
+    One honest retention review per click. The quality target is unchanged;
+    rewrites are now an explicit separate user action.
+    max_rewrite_rounds is retained for backwards-compatible callers only.
+    """
+    project = get_project(project_id)
+    script = load_json(project, "script_json", {})
+    if not script:
+        raise RuntimeError("Write the script before reviewing retention.")
 
-Rewrite the complete script so the specific problems above are fixed.
-Do not game the score and do not merely mention the fixes. Actually rewrite the narration.
-"""
+    if progress:
+        progress("Reviewing your existing script. No automatic rewrites.")
+    review = _retention_review_for(project, script, progress=progress)
+    score = _score_retention(review)
+    review["quality_target"] = target_score
+    review["quality_gate_passed"] = score >= target_score
+    review["review_attempts"] = [{"round": 1, "score": score}]
+    review["automatic_rewrite_rounds"] = 0
+    save_json(project_id, "critique_json", review)
+    if progress:
+        progress(f"Review complete: {score}/100. Script unchanged.")
+    return review
 
-        revised = call_json(
-            RETENTION_REWRITE_SYSTEM,
-            rewrite_prompt,
-            0.25,
-            section="script",
-        )
 
-        if revised:
-            best_script = revised
-            save_json(project_id, "script_json", best_script, "script_ready")
+def improve_script_once(project_id, target_score=95, progress=None):
+    """One deliberate rewrite and one rescore, retaining the better script."""
+    project = get_project(project_id)
+    original_script = load_json(project, "script_json", {})
+    previous_review = load_json(project, "critique_json", {})
+    if not original_script or not previous_review:
+        raise RuntimeError("Review the existing script before requesting an improvement.")
 
-    if best_review is None:
-        raise RuntimeError("The retention review returned no usable result.")
+    original_score = _score_retention(previous_review)
+    if progress:
+        progress("Rewriting the script once using the existing critique.")
+    rewrite_prompt = (
+        f"TARGET RUNTIME: {project['target_minutes']} minutes\n"
+        f"QUALITY TARGET: {target_score}/100 or better\n\n"
+        "CURRENT SCRIPT:\n"
+        + json.dumps(original_script, ensure_ascii=False, separators=(",", ":"))
+        + "\n\nREVIEW TO ADDRESS:\n"
+        + json.dumps(previous_review, ensure_ascii=False, separators=(",", ":"))
+        + "\n\nMake substantive, scripture-grounded improvements. "
+        "Preserve the complete script structure. Return valid JSON."
+    )
+    revised_script = _fast_retention_json(
+        RETENTION_REWRITE_SYSTEM, rewrite_prompt,
+        task="rewrite", progress=progress,
+    )
+    if progress:
+        progress("Checking the new draft against the existing score.")
+    new_review = _retention_review_for(project, revised_script, progress=progress)
+    new_score = _score_retention(new_review)
 
-    best_review["quality_target"] = target_score
-    best_review["quality_gate_passed"] = best_score >= target_score
-    best_review["review_attempts"] = attempts
-    best_review["automatic_rewrite_rounds"] = max(0, len(attempts) - 1)
+    if new_score <= original_score:
+        if progress:
+            progress(
+                f"New draft scored {new_score}/100, not above {original_score}/100. "
+                "Kept the original script and review."
+            )
+        return previous_review
 
-    save_json(project_id, "critique_json", best_review)
-    return best_review
+    new_review["quality_target"] = target_score
+    new_review["quality_gate_passed"] = new_score >= target_score
+    new_review["review_attempts"] = [
+        {"round": 1, "score": original_score},
+        {"round": 2, "score": new_score},
+    ]
+    new_review["automatic_rewrite_rounds"] = 0
+    new_review["manual_rewrite_rounds"] = 1
+    # Only save the replacement after both the rewrite and its review succeeded.
+    save_json(project_id, "script_json", revised_script, "script_ready")
+    save_json(project_id, "critique_json", new_review)
+    if progress:
+        progress(f"Improved to {new_score}/100. New draft saved.")
+    return new_review
 
 
 def _fit_flow_durations(raw_durations, target_seconds):
