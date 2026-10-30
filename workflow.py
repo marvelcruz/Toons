@@ -35,6 +35,7 @@ from runtime_contract import (
 from reference_library import (
     compact_playbook_text,
     writer_reference_context,
+    prepare_story_style,
 )
 
 
@@ -1538,8 +1539,39 @@ Return valid JSON only.
 """
 
 
+def _require_prepared_story_style(project):
+    """Mandatory for new episodes; existing productions remain accessible."""
+    if not project:
+        raise RuntimeError("Select an episode first.")
+    brief = load_json(project, "style_brief_json", {})
+    if isinstance(brief, dict) and brief.get("status") == "ready":
+        return brief
+    if any(project.get(key) for key in (
+        "treatment_json", "writer_room_json", "script_json",
+        "character_bible_json", "scenes_json"
+    )):
+        return None
+    raise RuntimeError(
+        "Prepare Story Style & Research before starting this episode. "
+        "The reference brief must be saved first."
+    )
+
+
+def prepare_episode_style(project_id):
+    """Build and save a style brief without making a slow AI request."""
+    project = get_project(project_id)
+    if not project:
+        raise RuntimeError("Episode not found.")
+    brief = prepare_story_style(project)
+    if brief.get("status") != "ready" or not brief.get("relevant_reference_excerpts"):
+        raise RuntimeError("Reference preparation did not return a usable style brief.")
+    save_json(project_id, "style_brief_json", brief)
+    return brief
+
+
 def develop_treatment(project_id):
     p = get_project(project_id)
+    style_brief = _require_prepared_story_style(p)
     target_minutes = float(p['target_minutes'])
     target_seconds = int(round(target_minutes * 60))
     channel_learning = channel_performance_learning()
@@ -1586,6 +1618,9 @@ dramatic question, scripture scope and reason to exist. Avoid duplicate episodes
 
 CHANNEL PERFORMANCE LEARNING:
 {json.dumps(channel_learning, indent=2)}
+
+SAVED STORY-SPECIFIC STYLE BRIEF (APPROVED BEFORE WRITING):
+{json.dumps(style_brief or {}, ensure_ascii=False)}
 
 TESTED STORYTELLING REFERENCE PLAYBOOK:
 {reference_playbook}
@@ -1697,6 +1732,7 @@ Return:
 
 def _writer_room_script_prompt(project_id):
     p = get_project(project_id)
+    _require_prepared_story_style(p)
     treatment = load_json(p, "treatment_json", {})
     target_minutes = float(p["target_minutes"])
     channel_learning = channel_performance_learning()
@@ -2067,6 +2103,7 @@ def generate_writer_room(project_id):
 
 def synthesize_writer_room(project_id):
     p = get_project(project_id)
+    _require_prepared_story_style(p)
     room = load_json(p, "writer_room_json", {})
     treatment = load_json(p, "treatment_json", {})
 
