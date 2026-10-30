@@ -30,6 +30,7 @@ from db import (
     signed_asset_url,
     save_episode_metrics,
     list_episode_metrics,
+    save_private_style_corpus,
     channel_performance_learning,
     ai_usage_today,
     using_supabase,
@@ -42,6 +43,7 @@ from story_catalog import (
 )
 from workflow import (
     develop_treatment,
+    prepare_episode_style,
     draft_script,
     generate_writer_room,
     synthesize_writer_room,
@@ -64,6 +66,7 @@ from workflow import (
     review_scene_frame,
 )
 from prompt_composer import compose_scene_package, reference_summary
+from reference_library import reference_source_status
 from runtime_contract import (
     script_runtime_report, audio_runtime_report, runtime_label,
     script_fingerprint,
@@ -632,6 +635,7 @@ st.markdown(
 MAIN_SECTIONS = [
     "🏠 Home",
     "📋 Story Checklist",
+    "📚 Story Style & Research",
     "✍️ Story & Script",
     "🎨 Visual Bible",
     "🎙️ Audio",
@@ -642,6 +646,7 @@ MAIN_SECTIONS = [
 ]
 
 PIPELINE_SECTIONS = [
+    "📚 Story Style & Research",
     "✍️ Story & Script",
     "🎨 Visual Bible",
     "🎙️ Audio",
@@ -687,8 +692,21 @@ def audio_duration_seconds(audio_bytes):
     return None
 
 
+def style_prepared_or_legacy(project):
+    if not project:
+        return False
+    brief = load_json(project, "style_brief_json", {})
+    if isinstance(brief, dict) and brief.get("status") == "ready":
+        return True
+    return any(bool(project.get(key)) for key in (
+        "treatment_json", "writer_room_json", "script_json",
+        "character_bible_json", "scenes_json", "package_json"
+    ))
+
+
 def project_progress(project):
     checks = [
+        style_prepared_or_legacy(project),
         bool(project.get("treatment_json")),
         bool(project.get("script_json")),
         bool(project.get("critique_json")),
@@ -702,6 +720,8 @@ def project_progress(project):
 def next_step(project):
     if not project:
         return "Choose a story and create an episode."
+    if not style_prepared_or_legacy(project):
+        return "Prepare your story style and reference research."
     if not project.get("treatment_json"):
         return "Create the story treatment."
     if not project.get("script_json"):
@@ -869,6 +889,7 @@ with st.sidebar:
     )
 
     stage_labels = {
+        "📚 Story Style & Research": "00  Story Style & Research",
         "✍️ Story & Script": "01  Story & Script",
         "🎨 Visual Bible": "02  Visual Bible",
         "🎙️ Audio": "03  Narration Audio",
@@ -1356,6 +1377,7 @@ main_section = st.session_state.main_section
 page_names = {
     "🏠 Home": "Dashboard",
     "📋 Story Checklist": "Story Checklist",
+    "📚 Story Style & Research": "Story Style & Research",
     "✍️ Story & Script": "Story & Script",
     "🎨 Visual Bible": "Visual Bible",
     "🎙️ Audio": "Narration Audio",
@@ -1368,6 +1390,7 @@ page_names = {
 section_kickers = {
     "🏠 Home": "YOUR CREATIVE WORKSPACE",
     "📋 Story Checklist": "THE STORY LIBRARY",
+    "📚 Story Style & Research": "STORY REFERENCE LAB",
     "✍️ Story & Script": "DEVELOPMENT STUDIO",
     "🎨 Visual Bible": "WORLD BUILDING",
     "🎙️ Audio": "SOUND & NARRATION",
@@ -1379,6 +1402,7 @@ section_kickers = {
 section_descriptions = {
     "🏠 Home": "Every story, every scene, one connected creative process.",
     "📋 Story Checklist": "Keep your Bible story catalogue organised and your production plans on track.",
+    "📚 Story Style & Research": "Prepare the episode's storytelling style from your saved reference library before writing.",
     "✍️ Story & Script": "Shape the narrative, collaborate with your writers' room, and refine each script.",
     "🎨 Visual Bible": "Design a consistent world of characters, locations, costumes, and props.",
     "🎙️ Audio": "Build the voice and atmosphere for your episode.",
@@ -1493,7 +1517,11 @@ with page_root.container():
                 unsafe_allow_html=True,
             )
 
-            next_destination = "✍️ Story & Script"
+            next_destination = (
+                "✍️ Story & Script"
+                if style_prepared_or_legacy(project)
+                else "📚 Story Style & Research"
+            )
             if project.get("critique_json") and not project.get("character_bible_json"):
                 next_destination = "🎨 Visual Bible"
             elif project.get("character_bible_json") and not list_project_assets(project["id"], "narration_audio"):
@@ -1548,10 +1576,11 @@ with page_root.container():
 
         st.markdown(
             '<div class="ts-section-heading"><h3>The production pipeline</h3>'
-            '<span>Six connected creative stages</span></div>',
+            '<span>Seven connected creative stages</span></div>',
             unsafe_allow_html=True,
         )
         stage_progress = [
+            ("Style & Research", bool(project and style_prepared_or_legacy(project)), "Prepare"),
             ("Story & Script", bool(project and project.get("script_json")), "Develop"),
             ("Visual Bible", bool(project and project.get("character_bible_json")), "Design"),
             ("Narration", bool(project and list_project_assets(project["id"], "narration_audio")), "Record"),
