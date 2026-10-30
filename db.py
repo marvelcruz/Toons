@@ -884,6 +884,18 @@ def list_project_assets(project_id, asset_type=None):
     return result.data or []
 
 
+def download_project_asset(storage_path):
+    """Read a private cloud asset by its stored path on the server."""
+    if not using_supabase() or not storage_path:
+        raise RuntimeError("Cloud asset storage is not available.")
+    return (
+        _client()
+        .storage
+        .from_("toonscripture-assets")
+        .download(storage_path)
+    )
+
+
 def signed_asset_url(storage_path, expires_in=3600):
     if not using_supabase() or not storage_path:
         return None

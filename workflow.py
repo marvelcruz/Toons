@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+import hashlib
 
 from db import (
     get_project,
@@ -11,6 +12,8 @@ from db import (
     save_json,
     record_ai_usage,
     list_project_assets,
+    save_project_asset,
+    download_project_asset,
     channel_performance_learning,
 )
 from story_catalog import (
@@ -2710,12 +2713,251 @@ def _validate_visual_bible_pass(value, pass_name, required_lists):
     return value
 
 
-def _generate_visual_bible_pass(pass_name, prompt, required_lists, report, percent):
+# This route deliberately avoids the legacy 3x120-second retry loop and its
+# six-model fallback list. Four Visual Bible passes get one limited OpenRouter
+# attempt and (if needed) one limited Gemini attempt each.
+_VISUAL_BIBLE_BLOCKED_UNTIL = {}
+_VISUAL_BIBLE_VERSION = "visual-bible-fast-v1"
+_VISUAL_BIBLE_BUDGET_SECONDS = 280  # 20s margin below the five-minute target
+
+
+def _fast_visual_bible_json(system_prompt, user_prompt, pass_name,
+                            required_lists, deadline):
+    import requests
+
+    failures = []
+    if time.monotonic() + 6 >= deadline:
+        raise TimeoutError(
+            "The five-minute Visual Bible processing budget has been reached."
+        )
+
+    def decode_and_validate(text):
+        return _validate_visual_bible_pass(
+            _extract_json(text), pass_name, required_lists
+        )
+
+    model = (
+        os.getenv("TOONSCRIPTURE_VISUAL_BIBLE_OPENROUTER_MODEL", "openrouter/free").strip()
+        or "openrouter/free"
+    )
+    keys = _openrouter_keys()
+    if keys and _VISUAL_BIBLE_BLOCKED_UNTIL.get("openrouter", 0) <= time.monotonic():
+        entry = keys[0]
+        seconds = max(1, min(45, deadline - time.monotonic() - 20))
+        try:
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {entry['value']}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://toonscripture.onrender.com",
+                    "X-Title": "ToonScripture OS",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt +
+                         "\n\nReturn one JSON object with all requested fields. "
+                         "Every character, group, location and prop must be an object, "
+                         "never a plain string."},
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "provider": {"require_parameters": True},
+                    "max_tokens": 12000,
+                    "temperature": 0.2,
+                },
+                timeout=(3, seconds),
+            )
+            routed_model = model
+            if resp.ok:
+                body = resp.json()
+                routed_model = str(body.get("model") or model)
+                choices = body.get("choices") or []
+                if not choices:
+                    raise ValueError("The AI response contained no choices.")
+                msg = (choices[0] or {}).get("message") or {}
+                content = msg.get("content") or ""
+                if isinstance(content, list):
+                    content = "".join(str(x.get("text") or "")
+                                      for x in content if isinstance(x, dict))
+                parsed = decode_and_validate(str(content))
+                record_ai_usage(project_name=entry["name"],
+                                section_name="visual_bible",
+                                model_name=routed_model, outcome="success",
+                                http_status=200)
+                return parsed
+            record_ai_usage(project_name=entry["name"],
+                            section_name="visual_bible", model_name=model,
+                            outcome="error", http_status=resp.status_code)
+            failures.append(f"OpenRouter HTTP {resp.status_code}")
+            if resp.status_code == 429:
+                _VISUAL_BIBLE_BLOCKED_UNTIL["openrouter"] = time.monotonic() + 60
+        except (requests.Timeout, requests.RequestException, ValueError, TypeError, KeyError) as exc:
+            reason = "timeout" if isinstance(exc, requests.Timeout) else (
+                "invalid_json" if isinstance(exc, (ValueError, KeyError, TypeError)) else "network_error"
+            )
+            record_ai_usage(project_name=entry["name"],
+                            section_name="visual_bible", model_name=model,
+                            outcome=reason, http_status=None)
+            failures.append(f"OpenRouter {reason}")
+
+    # One independent Gemini fallback, never rotate Google projects to evade
+    # a quota limit. Do not mix google_search with application/json.
+    gemini_keys = _api_keys_for("visual_bible")
+    if gemini_keys and time.monotonic() + 6 < deadline:
+        entry = gemini_keys[0]
+        blocked_key = "gemini:" + entry["name"]
+        if _VISUAL_BIBLE_BLOCKED_UNTIL.get(blocked_key, 0) <= time.monotonic():
+            gemini_model = str(
+                os.getenv("TOONSCRIPTURE_VISUAL_BIBLE_GEMINI_MODEL")
+                or os.getenv("GEMINI_MODEL")
+                or "gemini-3.8-flash"
+            ).strip().removeprefix("models/")
+            seconds = max(1, min(15, deadline - time.monotonic() - 5))
+            gen_cfg = {
+                "temperature": 0.2,
+                "responseMimeType": "application/json",
+                "maxOutputTokens": 12000,
+            }
+            if gemini_model.startswith(("gemini-3", "gemini-4")):
+                gen_cfg["thinkingConfig"] = {"thinkingLevel": "low"}
+            try:
+                resp = requests.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"{gemini_model}:generateContent",
+                    headers={
+                        "x-goog-api-key": entry["value"],
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "systemInstruction": {
+                            "parts": [{"text": system_prompt}]
+                        },
+                        "contents": [{"role": "user", "parts": [
+                            {"text": user_prompt}
+                        ]}],
+                        "generationConfig": gen_cfg,
+                    },
+                    timeout=(3, seconds),
+                )
+                if resp.ok:
+                    payload = resp.json()
+                    candidates = payload.get("candidates") or []
+                    parts = ((candidates[0].get("content") or {}).get("parts") or []) if candidates else []
+                    content = "".join(
+                        str(part.get("text") or "") for part in parts
+                        if isinstance(part, dict)
+                    )
+                    parsed = decode_and_validate(content)
+                    record_ai_usage(project_name=entry["name"],
+                                    section_name="visual_bible",
+                                    model_name=gemini_model, outcome="success",
+                                    http_status=200)
+                    return parsed
+                record_ai_usage(project_name=entry["name"],
+                                section_name="visual_bible",
+                                model_name=gemini_model, outcome="error",
+                                http_status=resp.status_code)
+                failures.append(
+                    f"Gemini HTTP {resp.status_code} ({_gemini_error_category(resp)})"
+                )
+                if resp.status_code == 429:
+                    _VISUAL_BIBLE_BLOCKED_UNTIL[blocked_key] = time.monotonic() + 600
+            except (requests.Timeout, requests.RequestException, ValueError, TypeError, KeyError) as exc:
+                reason = "timeout" if isinstance(exc, requests.Timeout) else (
+                    "invalid_json" if isinstance(exc, (ValueError, KeyError, TypeError)) else "network_error"
+                )
+                record_ai_usage(project_name=entry["name"],
+                                section_name="visual_bible",
+                                model_name=gemini_model, outcome=reason,
+                                http_status=None)
+                failures.append(f"Gemini {reason}")
+
+    if time.monotonic() >= deadline - 3:
+        raise TimeoutError(
+            "Five-minute Visual Bible budget exhausted. "
+            "Completed passes remain available as checkpoints."
+        )
+    raise RuntimeError(
+        f"Visual Bible {pass_name} could not complete within its time limit. "
+        + ("; ".join(failures) if failures else "No available AI provider.")
+        + ". Completed passes have been preserved for the next attempt."
+    )
+
+
+def _read_visual_bible_checkpoints(project_id, fingerprint):
+    """Resume incomplete work from cloud assets without touching a finished Bible."""
+    try:
+        rows = list_project_assets(project_id, "visual_bible_checkpoint")
+    except Exception:
+        return {}
+    found = {}
+    for row in rows:
+        metadata = row.get("metadata_json") or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except ValueError:
+                continue
+        if not isinstance(metadata, dict):
+            continue
+        if metadata.get("source_fingerprint") != fingerprint:
+            continue
+        key = metadata.get("pass_key")
+        if key not in ("major", "support", "locations", "props") or key in found:
+            continue
+        try:
+            content = download_project_asset(row["storage_path"])
+            data = json.loads(content.decode("utf-8") if isinstance(content, bytes) else content)
+            required = {
+                "major": ("characters",),
+                "support": ("supporting_characters", "character_groups"),
+                "locations": ("locations",),
+                "props": ("props",),
+            }[key]
+            title = {
+                "major": "major characters",
+                "support": "supporting characters and groups",
+                "locations": "locations",
+                "props": "props and continuity",
+            }[key]
+            found[key] = _validate_visual_bible_pass(data, title, required)
+        except Exception:
+            continue
+    return found
+
+
+def _save_visual_bible_checkpoint(project_id, fingerprint, key, result):
+    """Best-effort cloud checkpoint; a storage hiccup must not fail generation."""
+    try:
+        raw = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        save_project_asset(
+            project_id, "visual_bible_checkpoint", f"Checkpoint {key}",
+            raw, f"{key}.json", content_type="application/json",
+            metadata={
+                "pass_key": key, "source_fingerprint": fingerprint,
+                "version": _VISUAL_BIBLE_VERSION,
+            },
+        )
+    except Exception as exc:
+        print(
+            "[ToonScripture] Visual Bible checkpoint could not be stored "
+            f"({type(exc).__name__}); continuing.",
+            flush=True,
+        )
+
+
+def _generate_visual_bible_pass(pass_name, prompt, required_lists, report, percent, deadline=None):
     """
     Run the existing Gemini/OpenRouter route. A successfully parsed JSON response
     can still be the wrong structure; request one structured repair in that case.
     Do not save incomplete Visual Bibles or silently invent missing detail.
     """
+    if deadline is not None:
+        return _fast_visual_bible_json(
+            BIBLE_SYSTEM, prompt, pass_name, required_lists, deadline
+        )
     response = call_json(BIBLE_SYSTEM, prompt, 0.2, section="visual_bible")
     try:
         return _validate_visual_bible_pass(response, pass_name, required_lists)
@@ -2761,13 +3003,24 @@ def build_character_bible(project_id, progress=None):
         if progress is not None:
             progress(percent, message)
 
-    report(0, "Preparing your episode and script")
+    started = time.monotonic()
+    deadline = started + _VISUAL_BIBLE_BUDGET_SECONDS
+    report(0, "Preparing your episode and checking saved progress")
 
     p = get_project(project_id)
     context = _context(p)
+    fingerprint = hashlib.sha256(
+        (_VISUAL_BIBLE_VERSION + context).encode("utf-8")
+    ).hexdigest()
+
+    # Do not reuse previous checkpoints when intentionally rebuilding a
+    # completed Visual Bible. Incomplete first-time runs can resume.
+    cached = {} if load_json(p, "character_bible_json", {}) else (
+        _read_visual_bible_checkpoints(project_id, fingerprint)
+    )
 
     report(5, "Pass 1 of 4 · Generating major characters")
-    major = _generate_visual_bible_pass("major characters", context + """
+    major = cached.get("major") or _generate_visual_bible_pass("major characters", context + """
 PASS 1 OF 4: MAJOR CHARACTERS ONLY.
 Return:
 {
@@ -2783,12 +3036,14 @@ Return:
    "identity_lock":"","negative_identity_lock":"","master_character_prompt":""
  }]
 }
-""", ("characters",), report, 5)
+""", ("characters",), report, 5, deadline=deadline)
+    if "major" not in cached:
+        _save_visual_bible_checkpoint(project_id, fingerprint, "major", major)
 
     report(25, "Pass 1 complete · Major characters ready")
     major_names = [x.get("name") for x in major.get("characters", [])]
     report(25, "Pass 2 of 4 · Generating supporting characters and groups")
-    support = _generate_visual_bible_pass("supporting characters and groups", context + f"""
+    support = cached.get("support") or _generate_visual_bible_pass("supporting characters and groups", context + f"""
 ESTABLISHED MAJOR CHARACTERS: {json.dumps(major_names)}
 PASS 2 OF 4: SUPPORTING CHARACTERS + GROUP/UNIFORM SYSTEMS + CREATURE GROUPS.
 Do not recreate major characters.
@@ -2810,11 +3065,13 @@ Return:
    "group_identity_lock":"","negative_group_lock":"","master_group_prompt":""
  }}]
 }}
-""", ("supporting_characters", "character_groups"), report, 25)
+""", ("supporting_characters", "character_groups"), report, 25, deadline=deadline)
+    if "support" not in cached:
+        _save_visual_bible_checkpoint(project_id, fingerprint, "support", support)
 
     report(50, "Pass 2 complete · Supporting characters and groups ready")
     report(50, "Pass 3 of 4 · Generating locations")
-    locations = _generate_visual_bible_pass("locations", context + f"""
+    locations = cached.get("locations") or _generate_visual_bible_pass("locations", context + f"""
 ESTABLISHED CHARACTERS: {json.dumps(major_names)}
 ESTABLISHED GROUPS: {json.dumps([x.get('name') for x in support.get('character_groups', [])])}
 PASS 3 OF 4: LOCATIONS ONLY.
@@ -2832,11 +3089,13 @@ Return:
    "environment_lock":"","master_environment_prompt":""
  }}]
 }}
-""", ("locations",), report, 50)
+""", ("locations",), report, 50, deadline=deadline)
+    if "locations" not in cached:
+        _save_visual_bible_checkpoint(project_id, fingerprint, "locations", locations)
 
     report(75, "Pass 3 complete · Locations ready")
     report(75, "Pass 4 of 4 · Generating props and continuity rules")
-    props = _generate_visual_bible_pass("props and continuity", context + f"""
+    props = cached.get("props") or _generate_visual_bible_pass("props and continuity", context + f"""
 ESTABLISHED LOCATIONS: {json.dumps([x.get('name') for x in locations.get('locations', [])])}
 PASS 4 OF 4: PROPS + GLOBAL CONTINUITY RULES ONLY.
 Return:
@@ -2851,7 +3110,9 @@ Return:
  "historical_interpretation_notes":[],
  "generation_warnings":[]
 }}
-""", ("props",), report, 75)
+""", ("props",), report, 75, deadline=deadline)
+    if "props" not in cached:
+        _save_visual_bible_checkpoint(project_id, fingerprint, "props", props)
 
     report(95, "Four passes complete · Saving your Visual Bible")
     final = {
@@ -2865,8 +3126,14 @@ Return:
         "historical_interpretation_notes": props.get("historical_interpretation_notes", []),
         "generation_warnings": props.get("generation_warnings", []),
     }
+    if time.monotonic() >= deadline:
+        raise TimeoutError(
+            "The Visual Bible reached its five-minute processing budget "
+            "before it could be saved. Completed passes are checkpointed."
+        )
     save_json(project_id, "character_bible_json", final, "bible_ready")
-    report(100, "Visual Bible saved and ready")
+    elapsed = round(time.monotonic() - started)
+    report(100, f"Visual Bible saved and ready · {elapsed}s processing")
     return final
 
 def narration_text(project_id):
