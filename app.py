@@ -2237,15 +2237,6 @@ with page_root.container():
                         with st.expander("Technical details"):
                             st.code(review_error)
 
-                        st.button(
-                            "Continue for now → Visual Bible",
-                            type="primary",
-                            use_container_width=True,
-                            key="skip_retention_to_visual_bible",
-                            on_click=go_to_main_section,
-                            args=("🎨 Visual Bible",),
-                        )
-
                     if critique:
                         score = critique.get("score_100")
                         if score is not None:
@@ -2270,8 +2261,8 @@ with page_root.container():
                             )
                         else:
                             st.warning(
-                                f"Retention quality gate not passed yet. "
-                                f"ToonScripture requires at least {target}/100 before Visual Bible."
+                                f"Retention target not reached: {int(score or 0)}/{target}. "
+                                "You can improve this script or continue to Visual Bible with the current draft."
                             )
 
                         if attempts:
@@ -2317,14 +2308,6 @@ with page_root.container():
                             st.caption(
                                 "Next, lock the appearance of characters, locations, groups and props."
                             )
-                            st.button(
-                                "Next → Visual Bible",
-                                type="primary",
-                                use_container_width=True,
-                                key="next_to_visual_bible",
-                                on_click=go_to_main_section,
-                                args=("🎨 Visual Bible",),
-                            )
                         else:
                             st.caption(
                                 "Your script has not yet reached 95/100. "
@@ -2364,6 +2347,37 @@ with page_root.container():
                                     )
                                     with st.expander("Technical details"):
                                         st.code(str(exc))
+
+                    # Every saved script can move forward, regardless of the
+                    # optional retention score. The quality result is still
+                    # recorded honestly and is never changed by navigation.
+                    st.divider()
+                    st.markdown("### Continue production")
+                    if critique:
+                        if passed:
+                            st.caption(
+                                "This script passed the retention quality target. "
+                                "The next step is to design its characters, locations and props."
+                            )
+                        else:
+                            st.caption(
+                                f"This script is currently below the {target}/100 retention target. "
+                                "You can improve it above, or continue with the saved draft "
+                                "and return to improve it later. Your score will not change."
+                            )
+                    else:
+                        st.caption(
+                            "Your script is saved but has not been reviewed yet. "
+                            "You can review it first or continue to the Visual Bible now."
+                        )
+                    st.button(
+                        "Next → Visual Bible",
+                        type="primary",
+                        use_container_width=True,
+                        key="next_to_visual_bible",
+                        on_click=go_to_main_section,
+                        args=("🎨 Visual Bible",),
+                    )
 
 
     # =========================================================
