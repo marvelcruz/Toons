@@ -5,7 +5,8 @@ Word counts estimate speaking time; only measured audio can confirm it.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+
 
 
 DEFAULT_WORDS_PER_MINUTE = 150
@@ -38,6 +39,13 @@ def script_narration_text(script: dict) -> str:
                         add(item.get("line") or item.get("dialogue") or item.get("text"))
     add(script.get("closing"))
     return "\n\n".join(parts)
+
+
+def script_fingerprint(script: dict) -> str:
+    """Tie new narration recordings to exactly the text that produced them."""
+    return hashlib.sha256(
+        script_narration_text(script).encode("utf-8")
+    ).hexdigest()
 
 
 def _positive_minutes(value):
