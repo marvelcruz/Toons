@@ -2743,7 +2743,7 @@ def _fast_visual_bible_json(system_prompt, user_prompt, pass_name,
     keys = _openrouter_keys()
     if keys and _VISUAL_BIBLE_BLOCKED_UNTIL.get("openrouter", 0) <= time.monotonic():
         entry = keys[0]
-        seconds = max(1, min(48, deadline - time.monotonic() - 12))
+        seconds = max(1, min(45, deadline - time.monotonic() - 20))
         try:
             resp = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -2767,7 +2767,7 @@ def _fast_visual_bible_json(system_prompt, user_prompt, pass_name,
                     "max_tokens": 12000,
                     "temperature": 0.2,
                 },
-                timeout=(5, seconds),
+                timeout=(3, seconds),
             )
             routed_model = model
             if resp.ok:
@@ -2814,7 +2814,7 @@ def _fast_visual_bible_json(system_prompt, user_prompt, pass_name,
                 or os.getenv("GEMINI_MODEL")
                 or "gemini-3.8-flash"
             ).strip().removeprefix("models/")
-            seconds = max(1, min(20, deadline - time.monotonic() - 3))
+            seconds = max(1, min(15, deadline - time.monotonic() - 5))
             gen_cfg = {
                 "temperature": 0.2,
                 "responseMimeType": "application/json",
@@ -2839,7 +2839,7 @@ def _fast_visual_bible_json(system_prompt, user_prompt, pass_name,
                         ]}],
                         "generationConfig": gen_cfg,
                     },
-                    timeout=(5, seconds),
+                    timeout=(3, seconds),
                 )
                 if resp.ok:
                     payload = resp.json()
