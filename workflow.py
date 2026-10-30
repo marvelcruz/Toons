@@ -3003,13 +3003,24 @@ def build_character_bible(project_id, progress=None):
         if progress is not None:
             progress(percent, message)
 
-    report(0, "Preparing your episode and script")
+    started = time.monotonic()
+    deadline = started + _VISUAL_BIBLE_BUDGET_SECONDS
+    report(0, "Preparing your episode and checking saved progress")
 
     p = get_project(project_id)
     context = _context(p)
+    fingerprint = hashlib.sha256(
+        (_VISUAL_BIBLE_VERSION + context).encode("utf-8")
+    ).hexdigest()
+
+    # Do not reuse previous checkpoints when intentionally rebuilding a
+    # completed Visual Bible. Incomplete first-time runs can resume.
+    cached = {} if load_json(p, "character_bible_json", {}) else (
+        _read_visual_bible_checkpoints(project_id, fingerprint)
+    )
 
     report(5, "Pass 1 of 4 · Generating major characters")
-    major = _generate_visual_bible_pass("major characters", context + """
+    major = cached.get("major") or _generate_visual_bible_pass("major characters", context + """
 PASS 1 OF 4: MAJOR CHARACTERS ONLY.
 Return:
 {
@@ -3025,12 +3036,14 @@ Return:
    "identity_lock":"","negative_identity_lock":"","master_character_prompt":""
  }]
 }
-""", ("characters",), report, 5)
+""", ("characters",), report, 5, deadline=deadline)
+    if "major" not in cached:
+        _save_visual_bible_checkpoint(project_id, fingerprint, "major", major)
 
     report(25, "Pass 1 complete · Major characters ready")
     major_names = [x.get("name") for x in major.get("characters", [])]
     report(25, "Pass 2 of 4 · Generating supporting characters and groups")
-    support = _generate_visual_bible_pass("supporting characters and groups", context + f"""
+    support = cached.get("support") or _generate_visual_bible_pass("supporting characters and groups", context + f"""
 ESTABLISHED MAJOR CHARACTERS: {json.dumps(major_names)}
 PASS 2 OF 4: SUPPORTING CHARACTERS + GROUP/UNIFORM SYSTEMS + CREATURE GROUPS.
 Do not recreate major characters.
@@ -3052,11 +3065,13 @@ Return:
    "group_identity_lock":"","negative_group_lock":"","master_group_prompt":""
  }}]
 }}
-""", ("supporting_characters", "character_groups"), report, 25)
+""", ("supporting_characters", "character_groups"), report, 25, deadline=deadline)
+    if "support" not in cached:
+        _save_visual_bible_checkpoint(project_id, fingerprint, "support", support)
 
     report(50, "Pass 2 complete · Supporting characters and groups ready")
     report(50, "Pass 3 of 4 · Generating locations")
-    locations = _generate_visual_bible_pass("locations", context + f"""
+    locations = cached.get("locations") or _generate_visual_bible_pass("locations", context + f"""
 ESTABLISHED CHARACTERS: {json.dumps(major_names)}
 ESTABLISHED GROUPS: {json.dumps([x.get('name') for x in support.get('character_groups', [])])}
 PASS 3 OF 4: LOCATIONS ONLY.
@@ -3074,11 +3089,13 @@ Return:
    "environment_lock":"","master_environment_prompt":""
  }}]
 }}
-""", ("locations",), report, 50)
+""", ("locations",), report, 50, deadline=deadline)
+    if "locations" not in cached:
+        _save_visual_bible_checkpoint(project_id, fingerprint, "locations", locations)
 
     report(75, "Pass 3 complete · Locations ready")
     report(75, "Pass 4 of 4 · Generating props and continuity rules")
-    props = _generate_visual_bible_pass("props and continuity", context + f"""
+    props = cached.get("props") or _generate_visual_bible_pass("props and continuity", context + f"""
 ESTABLISHED LOCATIONS: {json.dumps([x.get('name') for x in locations.get('locations', [])])}
 PASS 4 OF 4: PROPS + GLOBAL CONTINUITY RULES ONLY.
 Return:
@@ -3093,7 +3110,9 @@ Return:
  "historical_interpretation_notes":[],
  "generation_warnings":[]
 }}
-""", ("props",), report, 75)
+""", ("props",), report, 75, deadline=deadline)
+    if "props" not in cached:
+        _save_visual_bible_checkpoint(project_id, fingerprint, "props", props)
 
     report(95, "Four passes complete · Saving your Visual Bible")
     final = {
@@ -3107,8 +3126,14 @@ Return:
         "historical_interpretation_notes": props.get("historical_interpretation_notes", []),
         "generation_warnings": props.get("generation_warnings", []),
     }
+    if time.monotonic() >= deadline:
+        raise TimeoutError(
+            "The Visual Bible reached its five-minute processing budget "
+            "before it could be saved. Completed passes are checkpointed."
+        )
     save_json(project_id, "character_bible_json", final, "bible_ready")
-    report(100, "Visual Bible saved and ready")
+    elapsed = round(time.monotonic() - started)
+    report(100, f"Visual Bible saved and ready · {elapsed}s processing")
     return final
 
 def narration_text(project_id):
