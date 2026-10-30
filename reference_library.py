@@ -42,7 +42,7 @@ def active_reference_corpus():
 def reference_source_status():
     text, origin = active_reference_corpus()
     size_bytes = len(text.encode("utf-8"))
-    count_lines = len(text.splitlines())
+    count_lines = text.count("\n") + 1
     # Earlier source in the user's library was 854,528 bytes / 7,325 lines.
     complete = count_lines >= 7000 and size_bytes >= 800000
     return {
