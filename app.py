@@ -123,6 +123,87 @@ st.markdown(
     }
     [data-testid="stMain"] hr { border-color: #e8ebf1; margin: 1.45rem 0 !important; }
 
+    /* Remove Streamlit's developer runner/stop chrome. Keep the sidebar toggle. */
+    [data-testid="stStatusWidget"],
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"],
+    #MainMenu,
+    .stDeployButton {
+        visibility: hidden !important;
+        pointer-events: none !important;
+    }
+
+    /* Visual Bible: a studio-grade progress surface, not the default spinner. */
+    .ts-build-card {
+        padding: clamp(1.3rem, 2.3vw, 1.9rem);
+        background: linear-gradient(135deg, #fff 0%, #f5f7fc 100%);
+        border: 1px solid #dce4f0;
+        border-radius: 16px;
+        box-shadow: 0 14px 38px #1b31520c;
+        margin: .9rem 0 1.25rem;
+    }
+    .ts-build-eyebrow {
+        color: #596da4;
+        font-size: .68rem;
+        font-weight: 800;
+        letter-spacing: .14em;
+        margin-bottom: .75rem;
+    }
+    .ts-build-topline {
+        display: flex;
+        gap: 1rem;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+    .ts-build-step {
+        font: 750 clamp(.94rem, 1.5vw, 1.08rem)/1.5 'Manrope', sans-serif;
+        color: #25334d;
+    }
+    .ts-build-percent {
+        color: #415a98;
+        font: 800 1.15rem 'Manrope', sans-serif;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+    .ts-build-track {
+        height: 13px;
+        background: #dce3f2;
+        border-radius: 999px;
+        overflow: hidden;
+        position: relative;
+        box-shadow: inset 0 1px 3px #2a3c5c1a;
+    }
+    .ts-build-fill {
+        background: linear-gradient(90deg, #455e9e, #718ad0);
+        height: 100%;
+        border-radius: 999px;
+        min-width: 0;
+        overflow: hidden;
+        position: relative;
+        transition: width .45s ease;
+    }
+    .ts-build-fill::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(100deg, transparent 10%, #ffffff35 43%, #ffffffa6 54%, transparent 86%);
+        transform: translateX(-110%);
+        animation: ts-build-shimmer 1.8s ease-in-out infinite;
+    }
+    @keyframes ts-build-shimmer {
+        100% { transform: translateX(120%); }
+    }
+    .ts-build-help {
+        color: #77869e;
+        font-size: .76rem;
+        line-height: 1.7;
+        margin-top: .95rem;
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .ts-build-fill, .ts-build-fill::after { animation: none !important; transition: none !important; }
+    }
+
     /* Persistent dark studio navigation */
     [data-testid="stSidebar"] {
         background: var(--ts-navy) !important;
@@ -2432,6 +2513,10 @@ with page_root.container():
 
             bible = load_json(project, "character_bible_json", {})
 
+            notice = st.session_state.pop("visual_bible_build_notice", None)
+            if notice:
+                st.success(notice)
+
             if not bible:
                 st.info(
                     "You have not created the Visual Bible for this episode yet."
@@ -2446,13 +2531,44 @@ with page_root.container():
                 type="primary",
                 use_container_width=True,
             ):
+                build_panel = st.empty()
+
+                def show_build_progress(percent, message):
+                    # Actual completed AI passes drive the percentage. The
+                    # shimmer indicates activity while an individual API call
+                    # is running; it does not imply time-to-completion.
+                    value = max(0, min(100, int(percent)))
+                    build_panel.markdown(
+                        '<section class="ts-build-card">'
+                        '<div class="ts-build-eyebrow">VISUAL BIBLE · PRODUCTION IN PROGRESS</div>'
+                        '<div class="ts-build-topline">'
+                        f'<div class="ts-build-step">{escape(str(message))}</div>'
+                        f'<div class="ts-build-percent">{value}%</div>'
+                        '</div>'
+                        '<div class="ts-build-track" role="progressbar" '
+                        f'aria-label="Visual Bible generation" aria-valuenow="{value}" '
+                        'aria-valuemin="0" aria-valuemax="100">'
+                        f'<div class="ts-build-fill" style="width:{value}%"></div>'
+                        '</div>'
+                        '<div class="ts-build-help">'
+                        'Progress advances when each real AI generation pass finishes. '
+                        'The moving highlight means the current pass is still running, '
+                        'so the percentage may stay unchanged during a long request.'
+                        '</div></section>',
+                        unsafe_allow_html=True,
+                    )
+
                 try:
-                    with st.spinner(
-                        "Building people, groups, locations and props..."
-                    ):
-                        build_character_bible(project["id"])
+                    build_character_bible(
+                        project["id"],
+                        progress=show_build_progress,
+                    )
+                    st.session_state["visual_bible_build_notice"] = (
+                        "Visual Bible created and saved successfully."
+                    )
                     st.rerun()
                 except Exception as exc:
+                    build_panel.empty()
                     visual_bible_error = str(exc)
 
             if visual_bible_error:

@@ -2674,10 +2674,22 @@ SCRIPT:
 """
 
 
-def build_character_bible(project_id):
+def build_character_bible(project_id, progress=None):
+    """Generate four Visual Bible passes and report only real completed milestones.
+
+    progress(percent, message) is optional so existing callers keep working.
+    The percentage measures completed production stages, not elapsed time.
+    """
+    def report(percent, message):
+        if progress is not None:
+            progress(percent, message)
+
+    report(0, "Preparing your episode and script")
+
     p = get_project(project_id)
     context = _context(p)
 
+    report(5, "Pass 1 of 4 · Generating major characters")
     major = call_json(BIBLE_SYSTEM, context + """
 PASS 1 OF 4: MAJOR CHARACTERS ONLY.
 Return:
@@ -2696,7 +2708,9 @@ Return:
 }
 """, 0.2, section="visual_bible")
 
+    report(25, "Pass 1 complete · Major characters ready")
     major_names = [x.get("name") for x in major.get("characters", [])]
+    report(25, "Pass 2 of 4 · Generating supporting characters and groups")
     support = call_json(BIBLE_SYSTEM, context + f"""
 ESTABLISHED MAJOR CHARACTERS: {json.dumps(major_names)}
 PASS 2 OF 4: SUPPORTING CHARACTERS + GROUP/UNIFORM SYSTEMS + CREATURE GROUPS.
@@ -2721,6 +2735,8 @@ Return:
 }}
 """, 0.2, section="visual_bible")
 
+    report(50, "Pass 2 complete · Supporting characters and groups ready")
+    report(50, "Pass 3 of 4 · Generating locations")
     locations = call_json(BIBLE_SYSTEM, context + f"""
 ESTABLISHED CHARACTERS: {json.dumps(major_names)}
 ESTABLISHED GROUPS: {json.dumps([x.get('name') for x in support.get('character_groups', [])])}
@@ -2741,6 +2757,8 @@ Return:
 }}
 """, 0.2, section="visual_bible")
 
+    report(75, "Pass 3 complete · Locations ready")
+    report(75, "Pass 4 of 4 · Generating props and continuity rules")
     props = call_json(BIBLE_SYSTEM, context + f"""
 ESTABLISHED LOCATIONS: {json.dumps([x.get('name') for x in locations.get('locations', [])])}
 PASS 4 OF 4: PROPS + GLOBAL CONTINUITY RULES ONLY.
@@ -2758,6 +2776,7 @@ Return:
 }}
 """, 0.2, section="visual_bible")
 
+    report(95, "Four passes complete · Saving your Visual Bible")
     final = {
         "visual_direction": major.get("visual_direction", {}),
         "characters": major.get("characters", []),
@@ -2770,6 +2789,7 @@ Return:
         "generation_warnings": props.get("generation_warnings", []),
     }
     save_json(project_id, "character_bible_json", final, "bible_ready")
+    report(100, "Visual Bible saved and ready")
     return final
 
 def narration_text(project_id):
