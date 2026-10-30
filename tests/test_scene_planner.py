@@ -113,6 +113,23 @@ class InstantSceneProductionTests(unittest.TestCase):
                 workflow.plan_scenes("test-episode")
         save.assert_not_called()
 
+    def test_audio_from_old_script_is_not_used_after_script_changes(self):
+        with (
+            patch.object(workflow, "get_project", return_value=self.project),
+            patch.object(workflow, "load_json", side_effect=lambda p,key,default=None:
+                         self.script if key == "script_json" else self.bible),
+            patch.object(workflow, "list_project_assets", return_value=[
+                {"metadata_json": {
+                    "duration_seconds": 600,
+                    "script_fingerprint": "different-draft-hash",
+                }}
+            ]),
+            patch.object(workflow, "save_json") as save,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "older version"):
+                workflow.plan_scenes("test-episode")
+        save.assert_not_called()
+
     def test_no_saved_script_or_bible_does_not_overwrite_work(self):
         with (
             patch.object(workflow, "get_project", return_value=self.project),
