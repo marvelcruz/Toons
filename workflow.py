@@ -2674,6 +2674,83 @@ SCRIPT:
 """
 
 
+def _validate_visual_bible_pass(value, pass_name, required_lists):
+    """Validate model-generated structures before later passes access .get()."""
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"{pass_name}: expected a JSON object, received {type(value).__name__}."
+        )
+
+    for field in required_lists:
+        if field not in value:
+            raise ValueError(f"{pass_name}: missing required '{field}' list.")
+        entries = value[field]
+        if not isinstance(entries, list):
+            raise ValueError(
+                f"{pass_name}: '{field}' must be a list of objects, "
+                f"not {type(entries).__name__}."
+            )
+        for index, entry in enumerate(entries, 1):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"{pass_name}: '{field}' entry {index} must be an object, "
+                    f"not {type(entry).__name__}."
+                )
+            if not isinstance(entry.get("name"), str) or not entry["name"].strip():
+                raise ValueError(
+                    f"{pass_name}: '{field}' entry {index} needs a character, "
+                    "group, location or prop name."
+                )
+
+    if pass_name == "major characters" and not isinstance(
+        value.get("visual_direction"), dict
+    ):
+        raise ValueError("major characters: 'visual_direction' must be an object.")
+
+    return value
+
+
+def _generate_visual_bible_pass(pass_name, prompt, required_lists, report, percent):
+    """
+    Run the existing Gemini/OpenRouter route. A successfully parsed JSON response
+    can still be the wrong structure; request one structured repair in that case.
+    Do not save incomplete Visual Bibles or silently invent missing detail.
+    """
+    response = call_json(BIBLE_SYSTEM, prompt, 0.2, section="visual_bible")
+    try:
+        return _validate_visual_bible_pass(response, pass_name, required_lists)
+    except ValueError as original_error:
+        report(percent, f"Checking {pass_name} · Correcting AI response format")
+        # Retry only a malformed structure, not an API timeout/quota failure.
+        # The original generation already tried the assigned Gemini project;
+        # use the configured JSON-capable OpenRouter route for repair.
+        fields = ", ".join(required_lists)
+        repair_prompt = (
+            prompt
+            + "\n\nIMPORTANT RESPONSE FORMAT CORRECTION: "
+            + "Return one JSON object. The following keys MUST contain arrays "
+            + f"of fully detailed JSON objects (never plain strings): {fields}. "
+            + "Each object must have a non-empty 'name' and the detailed "
+            + "fields specified in the schema. Do not respond with a list "
+            + "of names or change the underlying Bible story. "
+            + f"The previous response failed validation: {original_error}"
+        )
+        try:
+            retry = _call_qwen_json(
+                BIBLE_SYSTEM, repair_prompt, 0.2, section="visual_bible"
+            )
+            return _validate_visual_bible_pass(
+                retry, pass_name, required_lists
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Visual Bible {pass_name} pass returned incorrectly "
+                "structured data twice. The existing script and any "
+                "previously saved Visual Bible are unchanged. "
+                "Please retry this generation."
+            ) from exc
+
+
 def build_character_bible(project_id, progress=None):
     """Generate four Visual Bible passes and report only real completed milestones.
 
@@ -2690,7 +2767,7 @@ def build_character_bible(project_id, progress=None):
     context = _context(p)
 
     report(5, "Pass 1 of 4 · Generating major characters")
-    major = call_json(BIBLE_SYSTEM, context + """
+    major = _generate_visual_bible_pass("major characters", context + """
 PASS 1 OF 4: MAJOR CHARACTERS ONLY.
 Return:
 {
@@ -2706,12 +2783,12 @@ Return:
    "identity_lock":"","negative_identity_lock":"","master_character_prompt":""
  }]
 }
-""", 0.2, section="visual_bible")
+""", ("characters",), report, 5)
 
     report(25, "Pass 1 complete · Major characters ready")
     major_names = [x.get("name") for x in major.get("characters", [])]
     report(25, "Pass 2 of 4 · Generating supporting characters and groups")
-    support = call_json(BIBLE_SYSTEM, context + f"""
+    support = _generate_visual_bible_pass("supporting characters and groups", context + f"""
 ESTABLISHED MAJOR CHARACTERS: {json.dumps(major_names)}
 PASS 2 OF 4: SUPPORTING CHARACTERS + GROUP/UNIFORM SYSTEMS + CREATURE GROUPS.
 Do not recreate major characters.
@@ -2733,11 +2810,11 @@ Return:
    "group_identity_lock":"","negative_group_lock":"","master_group_prompt":""
  }}]
 }}
-""", 0.2, section="visual_bible")
+""", ("supporting_characters", "character_groups"), report, 25)
 
     report(50, "Pass 2 complete · Supporting characters and groups ready")
     report(50, "Pass 3 of 4 · Generating locations")
-    locations = call_json(BIBLE_SYSTEM, context + f"""
+    locations = _generate_visual_bible_pass("locations", context + f"""
 ESTABLISHED CHARACTERS: {json.dumps(major_names)}
 ESTABLISHED GROUPS: {json.dumps([x.get('name') for x in support.get('character_groups', [])])}
 PASS 3 OF 4: LOCATIONS ONLY.
@@ -2755,11 +2832,11 @@ Return:
    "environment_lock":"","master_environment_prompt":""
  }}]
 }}
-""", 0.2, section="visual_bible")
+""", ("locations",), report, 50)
 
     report(75, "Pass 3 complete · Locations ready")
     report(75, "Pass 4 of 4 · Generating props and continuity rules")
-    props = call_json(BIBLE_SYSTEM, context + f"""
+    props = _generate_visual_bible_pass("props and continuity", context + f"""
 ESTABLISHED LOCATIONS: {json.dumps([x.get('name') for x in locations.get('locations', [])])}
 PASS 4 OF 4: PROPS + GLOBAL CONTINUITY RULES ONLY.
 Return:
@@ -2774,7 +2851,7 @@ Return:
  "historical_interpretation_notes":[],
  "generation_warnings":[]
 }}
-""", 0.2, section="visual_bible")
+""", ("props",), report, 75)
 
     report(95, "Four passes complete · Saving your Visual Bible")
     final = {

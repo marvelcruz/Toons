@@ -51,6 +51,86 @@ class VisualBibleProgressTests(unittest.TestCase):
         self.assertNotIn(100, [pct for pct, _ in events])
         self.assertLess(max(pct for pct, _ in events), 100)
 
+    def test_malformed_character_strings_are_repaired_before_next_pass(self):
+        events = []
+        saves = []
+        invalid_major = {
+            "visual_direction": {"overall_style": "cinematic"},
+            "characters": ["Jesus", "Mary"],
+        }
+        with (
+            patch.object(workflow, "get_project", return_value={"id": "episode-4"}),
+            patch.object(workflow, "_context", return_value="Story context"),
+            patch.object(workflow, "call_json", side_effect=[
+                invalid_major, self.responses[1], self.responses[2], self.responses[3]
+            ]) as ai,
+            patch.object(workflow, "_call_qwen_json", return_value=self.responses[0]) as repair,
+            patch.object(workflow, "save_json", side_effect=lambda *args: saves.append(args)),
+        ):
+            result = workflow.build_character_bible(
+                "episode-4", progress=lambda pct, msg: events.append((pct, msg))
+            )
+        self.assertEqual(ai.call_count, 4)
+        repair.assert_called_once()
+        self.assertEqual(result["characters"][0]["name"], "A")
+        self.assertEqual(len(saves), 1)
+        self.assertTrue(any("Correcting" in message for _, message in events))
+        self.assertEqual(events[-1][0], 100)
+
+    def test_malformed_groups_are_repaired_before_accessing_names(self):
+        malformed_support = {
+            "supporting_characters": [],
+            "character_groups": ["Roman soldiers", "Disciples"],
+        }
+        with (
+            patch.object(workflow, "get_project", return_value={"id": "episode-5"}),
+            patch.object(workflow, "_context", return_value="Story context"),
+            patch.object(workflow, "call_json", side_effect=[
+                self.responses[0], malformed_support, self.responses[2], self.responses[3],
+            ]),
+            patch.object(workflow, "_call_qwen_json", return_value=self.responses[1]) as repair,
+            patch.object(workflow, "save_json") as save,
+        ):
+            result = workflow.build_character_bible("episode-5")
+        repair.assert_called_once()
+        self.assertEqual(result["character_groups"][0]["name"], "Group")
+        save.assert_called_once()
+
+    def test_unrepairable_response_is_safe_and_explains_the_problem(self):
+        events = []
+        with (
+            patch.object(workflow, "get_project", return_value={"id": "episode-6"}),
+            patch.object(workflow, "_context", return_value="Story context"),
+            patch.object(workflow, "call_json", return_value={
+                "visual_direction": {}, "characters": ["Jesus"]
+            }),
+            patch.object(workflow, "_call_qwen_json", return_value={
+                "visual_direction": {}, "characters": "Jesus"
+            }),
+            patch.object(workflow, "save_json") as save,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "incorrectly structured data twice"
+            ):
+                workflow.build_character_bible(
+                    "episode-6", progress=lambda pct, msg: events.append((pct, msg))
+                )
+        save.assert_not_called()
+        self.assertNotIn(100, [pct for pct, _ in events])
+
+    def test_wrong_top_level_response_is_repaired(self):
+        with (
+            patch.object(workflow, "call_json", return_value="Jesus") as initial,
+            patch.object(workflow, "_call_qwen_json", return_value=self.responses[0]) as repair,
+        ):
+            result = workflow._generate_visual_bible_pass(
+                "major characters", "Story and schema",
+                ("characters",), lambda *_: None, 5
+            )
+        initial.assert_called_once()
+        repair.assert_called_once()
+        self.assertEqual(result["characters"][0]["name"], "A")
+
     def test_existing_callers_do_not_need_progress_callback(self):
         with (
             patch.object(workflow, "get_project", return_value={"id": "episode-3"}),
