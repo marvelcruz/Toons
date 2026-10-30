@@ -65,7 +65,8 @@ from workflow import (
 )
 from prompt_composer import compose_scene_package, reference_summary
 from runtime_contract import (
-    script_runtime_report, audio_runtime_report, runtime_label
+    script_runtime_report, audio_runtime_report, runtime_label,
+    script_fingerprint,
 )
 
 st.set_page_config(
@@ -3326,6 +3327,9 @@ with page_root.container():
                                     ),
                                     "word_count": len(
                                         full_narration.split()
+                                    ),
+                                    "script_fingerprint": script_fingerprint(
+                                        load_json(project, "script_json", {})
                                     ),
                                 },
                             )
