@@ -177,6 +177,7 @@ def _local_init_db():
             format TEXT DEFAULT 'long_form',
             status TEXT DEFAULT 'idea',
             treatment_json TEXT,
+            style_brief_json TEXT,
             writer_room_json TEXT,
             script_json TEXT,
             critique_json TEXT,
@@ -261,6 +262,10 @@ def _local_init_db():
     if "writer_room_json" not in existing_project_columns:
         con.execute(
             "ALTER TABLE projects ADD COLUMN writer_room_json TEXT"
+        )
+    if "style_brief_json" not in existing_project_columns:
+        con.execute(
+            "ALTER TABLE projects ADD COLUMN style_brief_json TEXT"
         )
 
     con.commit()
@@ -416,6 +421,7 @@ def create_project(
 def save_json(project_id, field, value, status=None):
     allowed = {
         "treatment_json",
+        "style_brief_json",
         "writer_room_json",
         "script_json",
         "critique_json",
@@ -465,6 +471,45 @@ def save_json(project_id, field, value, status=None):
 
     con.commit()
     con.close()
+
+
+def load_private_style_corpus():
+    """Prefer the approved private corpus; fall back to packaged excerpts.
+
+    Supabase RLS restricts full transcript access to authorized admins.
+    """
+    if not using_supabase():
+        return None
+    try:
+        response = (
+            _client()
+            .table("style_reference_sources")
+            .select("source_text,source_name,updated_at")
+            .eq("id", 1)
+            .limit(1)
+            .execute()
+        )
+        return response.data[0] if response.data else None
+    except Exception:
+        return None
+
+
+def save_private_style_corpus(file_name, source_text):
+    """Store user-supplied reference material privately, never in public GitHub."""
+    if not using_supabase():
+        raise RuntimeError("Private reference storage requires the connected database.")
+    source_text = str(source_text or "")
+    if not source_text.strip() or len(source_text) > 3_000_000:
+        raise ValueError("The uploaded transcript collection must be nonempty and under 3 MB.")
+    return (
+        _client().table("style_reference_sources").upsert(
+            {
+                "id": 1,
+                "source_name": str(file_name or "Uploaded transcripts")[:160],
+                "source_text": source_text,
+            }, on_conflict="id"
+        ).execute()
+    )
 
 
 def load_json(project, field, default=None):
