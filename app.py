@@ -2906,7 +2906,15 @@ with page_root.container():
 
             scene_data = load_json(project, "scenes_json", {})
             scenes = scene_data.get("scenes", [])
+            notice = st.session_state.pop("scene_build_notice", None)
+            if notice:
+                st.success(notice)
 
+            st.caption(
+                "Instant Storyboard turns your approved script and Visual Bible "
+                "into an editable Flow scene plan without another long AI request. "
+                "Review shot choices before production."
+            )
             scene_error = None
 
             if st.button(
@@ -2916,11 +2924,25 @@ with page_root.container():
                 type="primary",
                 use_container_width=True,
             ):
+                build_progress = st.progress(
+                    0, text="Preparing your script and continuity references"
+                )
                 try:
-                    with st.spinner("Breaking the story into production scenes..."):
-                        plan_scenes(project["id"])
+                    def update_scene_progress(percent, message):
+                        build_progress.progress(
+                            max(0, min(int(percent), 100)), text=message
+                        )
+
+                    finished = plan_scenes(
+                        project["id"], progress=update_scene_progress
+                    )
+                    st.session_state["scene_build_notice"] = (
+                        f"Scene plan ready: {len(finished['scenes'])} "
+                        "editable Flow clips. No AI queue or model retry."
+                    )
                     st.rerun()
                 except Exception as exc:
+                    build_progress.empty()
                     scene_error = str(exc)
 
             if scene_error:
