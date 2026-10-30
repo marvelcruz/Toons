@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from functools import lru_cache
@@ -22,6 +23,102 @@ def load_reference_corpus():
         return CORPUS_PATH.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return ""
+
+
+def active_reference_corpus():
+    """Retrieve private, approved transcripts when available.
+
+    Previously packaged excerpts remain a fallback, never a pretend complete
+    corpus. Query only when a story needs reference preparation.
+    """
+    from db import load_private_style_corpus
+
+    row = load_private_style_corpus()
+    if row and isinstance(row.get("source_text"), str) and row["source_text"].strip():
+        return row["source_text"], "private Supabase reference library"
+    return load_reference_corpus(), "packaged reference excerpts"
+
+
+def reference_source_status():
+    text, origin = active_reference_corpus()
+    size_bytes = len(text.encode("utf-8"))
+    count_lines = text.count("\n") + 1
+    # Earlier source in the user's library was 854,528 bytes / 7,325 lines.
+    complete = count_lines >= 7000 and size_bytes >= 800000
+    return {
+        "source": origin,
+        "characters": len(text),
+        "size_bytes": size_bytes,
+        "lines": count_lines,
+        "full_corpus_loaded": complete,
+        "content_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
+
+
+def prepare_story_style(project):
+    """Build a deterministic, episode-specific style brief from reference work."""
+    if not project or not str(project.get("story_name") or "").strip():
+        raise ValueError("Choose an episode with a story title first.")
+
+    playbook = load_reference_playbook()
+    if not playbook or not playbook.get("story_build_sequence"):
+        raise RuntimeError(
+            "The storytelling playbook is unavailable. Restore it before proceeding."
+        )
+    status = reference_source_status()
+    if not status["size_bytes"]:
+        raise RuntimeError(
+            "No reference transcripts are available. Add the private corpus first."
+        )
+
+    excerpts = relevant_reference_excerpts(
+        story_name=project.get("story_name"),
+        bible_reference=project.get("bible_reference"),
+        max_chunks=4,
+        max_chars=16000,
+    )
+    if not excerpts:
+        # Not every biblical character occurs in the reference collection.
+        # Offer general technique examples rather than forcing false matches.
+        corpus, _ = active_reference_corpus()
+        excerpts = [
+            {"relevance_score": 0, "excerpt": chunk}
+            for chunk in _chunks(corpus, chunk_size=1400, overlap=0)[:2]
+        ]
+    focused = [
+        {
+            "relevance_score": x.get("relevance_score", 0),
+            "excerpt": str(x.get("excerpt") or "")[:1800].strip(),
+        }
+        for x in excerpts if str(x.get("excerpt") or "").strip()
+    ]
+    if not focused:
+        raise RuntimeError("The reference library has no usable storytelling excerpts.")
+
+    return {
+        "status": "ready",
+        "story_name": project["story_name"],
+        "bible_reference": project.get("bible_reference") or "",
+        "target_minutes": project.get("target_minutes"),
+        "reference_source": status,
+        "playbook_name": playbook.get("name") or "ToonScripture Storytelling",
+        "storytelling_method": playbook.get("story_build_sequence") or [],
+        "quality_rules": playbook.get("non_negotiables") or [],
+        "script_review_criteria": playbook.get("writer_room_scoring") or [],
+        "adaptation_guardrail": playbook.get("adaptation_guardrail") or {},
+        "relevant_reference_excerpts": focused,
+        "selection_type": (
+            "story_relevant" if any(x["relevance_score"] for x in focused)
+            else "general_storytelling"
+        ),
+        "usage_rules": [
+            "Learn techniques, not copyrighted wording; never reproduce reference prose.",
+            "Use approved Scripture as factual authority, not the reference transcripts.",
+            "Build a human emotional contradiction, specific future payoffs and clear narrative progression.",
+            "Keep pacing and structure grounded in this episode's own story.",
+            "Treat unknown historical details as interpretation, not scriptural facts.",
+        ],
+    }
 
 
 def _keywords(*values):
@@ -85,7 +182,7 @@ def relevant_reference_excerpts(
     max_chunks=3,
     max_chars=16000,
 ):
-    corpus = load_reference_corpus()
+    corpus, _ = active_reference_corpus()
     if not corpus:
         return []
 
@@ -141,6 +238,19 @@ def relevant_reference_excerpts(
 
 def writer_reference_context(project, treatment=None):
     playbook = load_reference_playbook()
+    saved_brief = project.get("style_brief_json")
+    if isinstance(saved_brief, str):
+        try:
+            saved_brief = json.loads(saved_brief)
+        except ValueError:
+            saved_brief = {}
+    if isinstance(saved_brief, dict) and saved_brief.get("status") == "ready":
+        return {
+            "playbook": playbook,
+            "prepared_story_style": saved_brief,
+            "relevant_reference_excerpts": saved_brief.get("relevant_reference_excerpts", []),
+            "usage_rules": saved_brief.get("usage_rules", []),
+        }
     excerpts = relevant_reference_excerpts(
         story_name=project.get("story_name"),
         bible_reference=project.get("bible_reference"),
