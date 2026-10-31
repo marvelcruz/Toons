@@ -659,6 +659,7 @@ if "main_section" not in st.session_state:
     st.session_state.main_section = "🏠 Home"
 
 init_db()
+st.session_state["_toonscripture_db_degraded"] = False
 
 
 # =========================================================
@@ -802,7 +803,6 @@ def resilient_list_projects():
     try:
         projects = list_projects()
         st.session_state["_toonscripture_projects_cache"] = projects
-        st.session_state["_toonscripture_db_degraded"] = False
         return projects
     except Exception as exc:
         st.session_state["_toonscripture_db_degraded"] = True
@@ -1571,6 +1571,11 @@ with page_root.container():
         )
 
         summary = resilient_catalog_summary()
+        if st.session_state.get("_toonscripture_db_degraded"):
+            st.warning(
+                "The database is temporarily unavailable. "
+                "Showing cached catalogue information where available; refresh shortly to reconnect."
+            )
         active_projects = [
             p for p in resilient_list_projects()
             if (p.get("status") or "") != "archived"
