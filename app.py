@@ -659,6 +659,7 @@ if "main_section" not in st.session_state:
     st.session_state.main_section = "🏠 Home"
 
 init_db()
+st.session_state["_toonscripture_db_degraded"] = False
 
 
 # =========================================================
@@ -797,11 +798,97 @@ def show_script(script):
         st.write(script["closing"])
 
 
+def resilient_list_projects():
+    """Keep the workspace navigable during a brief Supabase API/DNS outage."""
+    try:
+        projects = list_projects()
+        st.session_state["_toonscripture_projects_cache"] = projects
+        return projects
+    except Exception as exc:
+        st.session_state["_toonscripture_db_degraded"] = True
+        st.session_state["_toonscripture_db_error"] = (
+            f"{type(exc).__name__}: {str(exc)[:240]}"
+        )
+        return st.session_state.get("_toonscripture_projects_cache", [])
+
+
+def resilient_catalog_summary():
+    try:
+        summary = catalog_summary()
+        st.session_state["_toonscripture_catalog_summary_cache"] = summary
+        return summary
+    except Exception as exc:
+        st.session_state["_toonscripture_db_degraded"] = True
+        st.session_state["_toonscripture_db_error"] = (
+            f"{type(exc).__name__}: {str(exc)[:240]}"
+        )
+        return st.session_state.get(
+            "_toonscripture_catalog_summary_cache",
+            {
+                "people_total": 0, "women_total": 0, "men_total": 0,
+                "high_priority": 0, "series_total": 0,
+            },
+        )
+
+
+def resilient_catalog_progress_summary():
+    try:
+        progress = catalog_progress_summary()
+        st.session_state["_toonscripture_catalog_progress_cache"] = progress
+        return progress
+    except Exception as exc:
+        st.session_state["_toonscripture_db_degraded"] = True
+        st.session_state["_toonscripture_db_error"] = (
+            f"{type(exc).__name__}: {str(exc)[:240]}"
+        )
+        return st.session_state.get(
+            "_toonscripture_catalog_progress_cache",
+            {"total": 0, "completed": 0, "in_progress": 0, "not_started": 0},
+        )
+
+
+def resilient_get_project(project_id):
+    """Use the last successfully loaded project if Supabase briefly drops."""
+    if not project_id:
+        return None
+    try:
+        project = get_project(project_id)
+        if project:
+            cache = st.session_state.setdefault("_toonscripture_project_cache", {})
+            cache[project_id] = project
+        return project
+    except Exception as exc:
+        st.session_state["_toonscripture_db_degraded"] = True
+        st.session_state["_toonscripture_db_error"] = (
+            f"{type(exc).__name__}: {str(exc)[:240]}"
+        )
+        cached = st.session_state.get(
+            "_toonscripture_project_cache", {}
+        ).get(project_id)
+        if cached:
+            return cached
+        return next(
+            (
+                item for item in st.session_state.get(
+                    "_toonscripture_projects_cache", []
+                )
+                if item.get("id") == project_id
+            ),
+            None,
+        )
+
+
 def current_project():
     projects = [
-        p for p in list_projects()
+        p for p in resilient_list_projects()
         if (p.get("status") or "") != "archived"
     ]
+    if st.session_state.get("_toonscripture_db_degraded"):
+        st.warning(
+            "The database connection is temporarily unavailable. "
+            "Showing the last loaded workspace where possible; your saved stories are not deleted. "
+            "Refresh in a moment to reconnect."
+        )
     if not projects:
         return None
 
@@ -826,7 +913,9 @@ def current_project():
         )
 
     st.session_state.project_id = chosen
-    return next(p for p in projects if p["id"] == chosen)
+    selected_project = next(p for p in projects if p["id"] == chosen)
+    st.session_state.setdefault("_toonscripture_project_cache", {})[chosen] = selected_project
+    return selected_project
 
 
 # =========================================================
@@ -1481,9 +1570,14 @@ with page_root.container():
             unsafe_allow_html=True,
         )
 
-        summary = catalog_summary()
+        summary = resilient_catalog_summary()
+        if st.session_state.get("_toonscripture_db_degraded"):
+            st.warning(
+                "The database is temporarily unavailable. "
+                "Showing cached catalogue information where available; refresh shortly to reconnect."
+            )
         active_projects = [
-            p for p in list_projects()
+            p for p in resilient_list_projects()
             if (p.get("status") or "") != "archived"
         ]
 
@@ -1642,7 +1736,7 @@ with page_root.container():
                 start_new_episode_dialog()
 
     project = (
-        get_project(st.session_state.get("project_id"))
+        resilient_get_project(st.session_state.get("project_id"))
         if st.session_state.get("project_id")
         else None
     )
@@ -1659,7 +1753,7 @@ with page_root.container():
             "lives here, so you can see what is finished, what is in progress, and what is still waiting."
         )
 
-        progress = catalog_progress_summary()
+        progress = resilient_catalog_progress_summary()
 
         p1, p2, p3, p4 = st.columns(4)
         p1.metric("All stories", progress["total"])
@@ -4002,7 +4096,7 @@ with page_root.container():
         )
 
         archived_projects = [
-            p for p in list_projects()
+            p for p in resilient_list_projects()
             if (p.get("status") or "") == "archived"
         ]
 

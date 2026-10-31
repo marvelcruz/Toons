@@ -28,8 +28,20 @@ def using_supabase():
 
 def _cloud_client():
     from supabase import create_client
+    from supabase.client import ClientOptions
 
-    client = create_client(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
+    # Fail quickly and predictably during transient DNS/API incidents instead
+    # of leaving the Streamlit page waiting on the SDK's long default timeout.
+    options = ClientOptions(
+        postgrest_client_timeout=12,
+        storage_client_timeout=30,
+        schema="public",
+    )
+    client = create_client(
+        SUPABASE_URL,
+        SUPABASE_PUBLISHABLE_KEY,
+        options=options,
+    )
 
     access_token = os.getenv("TOONSCRIPTURE_ACCESS_TOKEN", "").strip()
     refresh_token = os.getenv("TOONSCRIPTURE_REFRESH_TOKEN", "").strip()
