@@ -1570,7 +1570,7 @@ with page_root.container():
             unsafe_allow_html=True,
         )
 
-        summary = catalog_summary()
+        summary = resilient_catalog_summary()
         active_projects = [
             p for p in resilient_list_projects()
             if (p.get("status") or "") != "archived"
@@ -1748,7 +1748,7 @@ with page_root.container():
             "lives here, so you can see what is finished, what is in progress, and what is still waiting."
         )
 
-        progress = catalog_progress_summary()
+        progress = resilient_catalog_progress_summary()
 
         p1, p2, p3, p4 = st.columns(4)
         p1.metric("All stories", progress["total"])
@@ -4091,7 +4091,7 @@ with page_root.container():
         )
 
         archived_projects = [
-            p for p in list_projects()
+            p for p in resilient_list_projects()
             if (p.get("status") or "") == "archived"
         ]
 
