@@ -66,6 +66,7 @@ from workflow import (
     review_scene_frame,
 )
 from prompt_composer import compose_scene_package, reference_summary
+from reference_library import clear_reference_corpus_cache
 from runtime_contract import (
     script_runtime_report, audio_runtime_report, runtime_label,
     script_fingerprint,
@@ -1858,6 +1859,7 @@ with page_root.container():
                         save_private_style_corpus(
                             source_upload.name, text_source
                         )
+                        clear_reference_corpus_cache()
                         st.session_state.pop(f"_style_auto_attempted_{project['id']}", None)
                         st.session_state.pop(f"_style_auto_error_{project['id']}", None)
                         st.success("Private reference library saved.")
