@@ -797,11 +797,52 @@ def show_script(script):
         st.write(script["closing"])
 
 
+def resilient_list_projects():
+    """Keep the workspace navigable during a brief Supabase API/DNS outage."""
+    try:
+        projects = list_projects()
+        st.session_state["_toonscripture_projects_cache"] = projects
+        st.session_state["_toonscripture_db_degraded"] = False
+        return projects
+    except Exception as exc:
+        st.session_state["_toonscripture_db_degraded"] = True
+        st.session_state["_toonscripture_db_error"] = (
+            f"{type(exc).__name__}: {str(exc)[:240]}"
+        )
+        return st.session_state.get("_toonscripture_projects_cache", [])
+
+
+def resilient_get_project(project_id):
+    """Use the last successfully loaded project if Supabase briefly drops."""
+    if not project_id:
+        return None
+    try:
+        project = get_project(project_id)
+        if project:
+            cache = st.session_state.setdefault("_toonscripture_project_cache", {})
+            cache[project_id] = project
+        return project
+    except Exception as exc:
+        st.session_state["_toonscripture_db_degraded"] = True
+        st.session_state["_toonscripture_db_error"] = (
+            f"{type(exc).__name__}: {str(exc)[:240]}"
+        )
+        return st.session_state.get(
+            "_toonscripture_project_cache", {}
+        ).get(project_id)
+
+
 def current_project():
     projects = [
-        p for p in list_projects()
+        p for p in resilient_list_projects()
         if (p.get("status") or "") != "archived"
     ]
+    if st.session_state.get("_toonscripture_db_degraded"):
+        st.warning(
+            "The database connection is temporarily unavailable. "
+            "Showing the last loaded workspace where possible; your saved stories are not deleted. "
+            "Refresh in a moment to reconnect."
+        )
     if not projects:
         return None
 
@@ -1642,7 +1683,7 @@ with page_root.container():
                 start_new_episode_dialog()
 
     project = (
-        get_project(st.session_state.get("project_id"))
+        resilient_get_project(st.session_state.get("project_id"))
         if st.session_state.get("project_id")
         else None
     )
