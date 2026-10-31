@@ -806,6 +806,12 @@ Create one unified final JSON result for section: {section}.
 
 
 def _call_gemini_only(system_prompt, user_prompt, temperature=0.3, section="general"):
+    """Make bounded Gemini calls without long model/attempt retry chains.
+
+    The section's assigned project remains primary. The reserved spare is used
+    only for auth, service or network failures; HTTP 429 never triggers a
+    project switch. A hard wall-clock budget prevents retries from stacking.
+    """
     key_entries = _api_keys_for(section)
     if not key_entries:
         raise RuntimeError(
@@ -821,208 +827,131 @@ def _call_gemini_only(system_prompt, user_prompt, temperature=0.3, section="gene
     if preferred.startswith("models/"):
         preferred = preferred.split("/", 1)[1].strip()
 
+    # Keep one known-good alternate for model-specific 400/404/503 responses.
     models = []
-    for model in [
-        preferred,
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-    ]:
+    for model in [preferred, "gemini-3.8-flash", "gemini-3.7-flash"]:
         model = str(model or "").strip()
-        if model and model.startswith("gemini-") and model not in models:
+        if model.startswith("gemini-") and model not in models:
             models.append(model)
+    models = models[:2]
 
     payload = {
         "systemInstruction": {"parts": [{"text": system_prompt}]},
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": user_prompt}],
-            }
-        ],
+        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
         "generationConfig": {
             "temperature": temperature,
             "responseMimeType": "application/json",
         },
     }
-
     if section in {"treatment", "visual_bible"}:
         payload["tools"] = [{"google_search": {}}]
 
+    budget_seconds = max(
+        20, min(100, int(os.getenv("TOONSCRIPTURE_GEMINI_REQUEST_BUDGET_SECONDS", "90")))
+    )
+    request_timeout = max(
+        10, min(55, int(os.getenv("TOONSCRIPTURE_GEMINI_REQUEST_TIMEOUT_SECONDS", "50")))
+    )
+    deadline = time.monotonic() + budget_seconds
     last_error = None
 
-    # Primary project is the first configured key.
-    # Backup projects are used only for auth/revocation/network/service failures.
-    # A 429 quota response intentionally stops here rather than rotating projects.
     for key_index, key_entry in enumerate(key_entries):
         key = key_entry["value"]
-        fail_over_to_next_key = False
+        try_next_key = False
 
         for model in models:
+            remaining = deadline - time.monotonic()
+            if remaining < 5:
+                break
             url = (
                 "https://generativelanguage.googleapis.com/v1beta/models/"
                 f"{model}:generateContent"
             )
+            try:
+                response = requests.post(
+                    url,
+                    headers={
+                        "x-goog-api-key": key,
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=(5, max(5, min(request_timeout, int(remaining)))),
+                )
+                record_ai_usage(
+                    project_name=key_entry["name"],
+                    section_name=section,
+                    model_name=model,
+                    outcome="success" if response.ok else "error",
+                    http_status=response.status_code,
+                )
 
-            for attempt in range(3):
-                try:
-                    response = requests.post(
-                        url,
-                        headers={
-                            "x-goog-api-key": key,
-                            "Content-Type": "application/json",
-                        },
-                        json=payload,
-                        timeout=120,
+                if response.ok:
+                    data = response.json()
+                    candidates = data.get("candidates") or []
+                    if not candidates:
+                        raise RuntimeError("Google returned no generated text. Please try again.")
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    generated = "".join(
+                        str(part.get("text") or "") for part in parts
+                    ).strip()
+                    if not generated:
+                        raise RuntimeError("Google returned an empty response. Please try again.")
+                    return _extract_json(generated)
+
+                status = response.status_code
+                last_error = RuntimeError(
+                    f"Gemini returned HTTP {status}: {response.text[:500]}"
+                )
+                if status == 429:
+                    raise RuntimeError(
+                        "The assigned Gemini project's quota is temporarily exhausted. "
+                        "ToonScripture did not switch projects automatically. "
+                        "Please retry later or increase quota on that project."
                     )
-
-                    record_ai_usage(
-                        project_name=key_entry["name"],
-                        section_name=section,
-                        model_name=model,
-                        outcome="success" if response.ok else "error",
-                        http_status=response.status_code,
-                    )
-
-                    if response.ok:
-                        data = response.json()
-                        candidates = data.get("candidates") or []
-                        if not candidates:
-                            raise RuntimeError(
-                                "Google returned no generated text. Please try again."
-                            )
-
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        text = "".join(
-                            str(part.get("text") or "")
-                            for part in parts
-                        ).strip()
-
-                        if not text:
-                            raise RuntimeError(
-                                "Google returned an empty response. Please try again."
-                            )
-
-                        return _extract_json(text)
-
-                    status = response.status_code
-                    last_error = RuntimeError(
-                        f"Gemini returned HTTP {status}: {response.text[:800]}"
-                    )
-
-                    if status == 429:
-                        raise RuntimeError(
-                            "The primary Gemini API project's quota is temporarily exhausted. "
-                            "ToonScripture did not switch projects automatically. "
-                            "Please retry later or increase quota on the primary project."
-                        )
-
-                    if status in (401, 403):
-                        fail_over_to_next_key = True
-                        break
-
-                    if status == 503:
-                        if attempt < 2:
-                            time.sleep(2 * (attempt + 1))
-                            continue
-                        print(
-                            f"[ToonScripture] {section}: {model} is overloaded on "
-                            f"{key_entry['name']}; trying the next model.",
-                            flush=True,
-                        )
-                        break
-
-                    if status == 400:
-                        body = response.text.lower()
-                        key_problem_markers = [
-                            "api key not valid",
-                            "api_key_invalid",
-                            "permission denied",
-                            "permission_denied",
-                            "service disabled",
-                            "service_disabled",
-                            "has not been used",
-                            "access not configured",
-                        ]
-                        if any(marker in body for marker in key_problem_markers):
-                            print(
-                                f"[ToonScripture] {section}: {key_entry['name']} rejected by Google; "
-                                "trying reserved spare if available.",
-                                flush=True,
-                            )
-                            fail_over_to_next_key = True
-                            break
-
-                        # A 400 can also be model/config related. Try the next model first.
-                        print(
-                            f"[ToonScripture] {section}: model {model} returned HTTP 400 on "
-                            f"{key_entry['name']}: {response.text[:500]}",
-                            flush=True,
-                        )
-                        break
-
-                    if status == 404:
-                        break
-
-                    if status >= 500:
-                        if attempt < 2:
-                            time.sleep(2 * (attempt + 1))
-                            continue
-                        print(
-                            f"[ToonScripture] {section}: {model} returned HTTP {status} on "
-                            f"{key_entry['name']}; trying the next model.",
-                            flush=True,
-                        )
-                        break
-
-                    raise last_error
-
-                except requests.Timeout as exc:
-                    record_ai_usage(
-                        project_name=key_entry["name"],
-                        section_name=section,
-                        model_name=model,
-                        outcome="timeout",
-                        http_status=None,
-                    )
-                    last_error = exc
-                    if attempt < 2:
-                        time.sleep(2 * (attempt + 1))
-                        continue
-                    fail_over_to_next_key = True
+                if status in (401, 403):
+                    try_next_key = True
                     break
-
-                except requests.RequestException as exc:
-                    record_ai_usage(
-                        project_name=key_entry["name"],
-                        section_name=section,
-                        model_name=model,
-                        outcome="network_error",
-                        http_status=None,
+                if status == 400:
+                    body = response.text.lower()
+                    key_problem_markers = (
+                        "api key not valid", "api_key_invalid", "permission denied",
+                        "permission_denied", "service disabled", "service_disabled",
+                        "has not been used", "access not configured",
                     )
-                    last_error = exc
-                    if attempt < 2:
-                        time.sleep(2 * (attempt + 1))
-                        continue
-                    fail_over_to_next_key = True
-                    break
-
-            if fail_over_to_next_key:
+                    if any(marker in body for marker in key_problem_markers):
+                        try_next_key = True
+                        break
+                # Model-specific errors get one alternate model, not repeated retries.
+                continue
+            except requests.Timeout as exc:
+                record_ai_usage(
+                    project_name=key_entry["name"], section_name=section,
+                    model_name=model, outcome="timeout", http_status=None,
+                )
+                last_error = exc
+                try_next_key = True
+                break
+            except requests.RequestException as exc:
+                record_ai_usage(
+                    project_name=key_entry["name"], section_name=section,
+                    model_name=model, outcome="network_error", http_status=None,
+                )
+                last_error = exc
+                try_next_key = True
                 break
 
-        if fail_over_to_next_key and key_index < len(key_entries) - 1:
+        if try_next_key and key_index < len(key_entries) - 1:
             continue
-
-        if fail_over_to_next_key:
+        if time.monotonic() >= deadline:
+            break
+        if not try_next_key:
             break
 
     raise RuntimeError(
-        "Gemini could not complete this request with the configured project. "
-        f"Last error: {last_error}"
+        "Gemini could not complete this request within its bounded time window. "
+        "Your saved work is unchanged. "
+        f"Last error: {last_error or 'request budget reached'}"
     )
-
 
 def _fast_treatment_json(system_prompt, user_prompt, temperature=0.25, progress=None):
     """Generate a story treatment with one bounded Gemini request and one bounded OpenRouter fallback.
