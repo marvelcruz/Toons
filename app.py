@@ -812,6 +812,41 @@ def resilient_list_projects():
         return st.session_state.get("_toonscripture_projects_cache", [])
 
 
+def resilient_catalog_summary():
+    try:
+        summary = resilient_catalog_summary()
+        st.session_state["_toonscripture_catalog_summary_cache"] = summary
+        return summary
+    except Exception as exc:
+        st.session_state["_toonscripture_db_degraded"] = True
+        st.session_state["_toonscripture_db_error"] = (
+            f"{type(exc).__name__}: {str(exc)[:240]}"
+        )
+        return st.session_state.get(
+            "_toonscripture_catalog_summary_cache",
+            {
+                "people_total": 0, "women_total": 0, "men_total": 0,
+                "high_priority": 0, "series_total": 0,
+            },
+        )
+
+
+def resilient_catalog_progress_summary():
+    try:
+        progress = resilient_catalog_progress_summary()
+        st.session_state["_toonscripture_catalog_progress_cache"] = progress
+        return progress
+    except Exception as exc:
+        st.session_state["_toonscripture_db_degraded"] = True
+        st.session_state["_toonscripture_db_error"] = (
+            f"{type(exc).__name__}: {str(exc)[:240]}"
+        )
+        return st.session_state.get(
+            "_toonscripture_catalog_progress_cache",
+            {"total": 0, "completed": 0, "in_progress": 0, "not_started": 0},
+        )
+
+
 def resilient_get_project(project_id):
     """Use the last successfully loaded project if Supabase briefly drops."""
     if not project_id:
