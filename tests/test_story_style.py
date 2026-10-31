@@ -28,11 +28,12 @@ Stay with us until the end to see what courage costs."""
         with (
             patch.object(workflow, "get_project", return_value=self.new_episode),
             patch.object(reference_library, "active_reference_corpus",
-                         return_value=(sample, "private Supabase reference library")),
+                         return_value=(sample, "private Supabase reference library")) as source,
             patch.object(workflow, "save_json", side_effect=lambda *args: saved.append(args)),
             patch.object(workflow, "call_json") as ai,
         ):
             report = workflow.prepare_episode_style("episode-new")
+        source.assert_called_once()
         self.assertEqual(report["status"], "ready")
         self.assertEqual(report["story_name"], "Daniel in the Lions' Den")
         self.assertGreater(len(report["relevant_reference_excerpts"]), 0)
