@@ -827,9 +827,20 @@ def resilient_get_project(project_id):
         st.session_state["_toonscripture_db_error"] = (
             f"{type(exc).__name__}: {str(exc)[:240]}"
         )
-        return st.session_state.get(
+        cached = st.session_state.get(
             "_toonscripture_project_cache", {}
         ).get(project_id)
+        if cached:
+            return cached
+        return next(
+            (
+                item for item in st.session_state.get(
+                    "_toonscripture_projects_cache", []
+                )
+                if item.get("id") == project_id
+            ),
+            None,
+        )
 
 
 def current_project():
@@ -867,7 +878,9 @@ def current_project():
         )
 
     st.session_state.project_id = chosen
-    return next(p for p in projects if p["id"] == chosen)
+    selected_project = next(p for p in projects if p["id"] == chosen)
+    st.session_state.setdefault("_toonscripture_project_cache", {})[chosen] = selected_project
+    return selected_project
 
 
 # =========================================================
