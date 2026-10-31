@@ -39,6 +39,39 @@ Stay with us until the end to see what courage costs."""
         self.assertEqual(saved[0][1], "style_brief_json")
         ai.assert_not_called()
 
+    def test_treatment_prompt_preserves_json_schema_without_formatting_error(self):
+        brief = {
+            "status": "ready",
+            "story_name": self.new_episode["story_name"],
+            "relevant_reference_excerpts": [],
+        }
+        captured = {}
+
+        def capture_prompt(system, prompt, temperature, section=None):
+            captured["prompt"] = prompt
+            return {"core_story": "A test treatment"}
+
+        with (
+            patch.object(workflow, "get_project", return_value=self.new_episode),
+            patch.object(workflow, "load_json", return_value=brief),
+            patch.object(workflow, "channel_performance_learning", return_value={}),
+            patch.object(workflow, "writer_reference_context", return_value={
+                "relevant_reference_excerpts": []
+            }),
+            patch.object(workflow, "compact_playbook_text", return_value=""),
+            patch.object(workflow, "call_json", side_effect=capture_prompt),
+            patch.object(workflow, "save_json"),
+        ):
+            result = workflow.develop_treatment("episode-new")
+
+        self.assertEqual(result["core_story"], "A test treatment")
+        prompt = captured["prompt"]
+        self.assertIn('"researched_scripture_references": [', prompt)
+        self.assertIn('    {\n      "reference": "",', prompt)
+        self.assertIn('"story_universe": {', prompt)
+        self.assertIn('"series_opportunities": [', prompt)
+
+
     def test_saved_brief_is_reused_in_writers_room(self):
         brief = {"status": "ready", "story_name": "Ruth", "relevant_reference_excerpts": [
             {"relevance_score": 12, "excerpt": "Test reference style example"}
