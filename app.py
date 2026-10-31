@@ -1572,7 +1572,7 @@ with page_root.container():
 
         summary = catalog_summary()
         active_projects = [
-            p for p in list_projects()
+            p for p in resilient_list_projects()
             if (p.get("status") or "") != "archived"
         ]
 
