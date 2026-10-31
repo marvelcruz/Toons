@@ -25,11 +25,12 @@ def load_reference_corpus():
         return ""
 
 
+@lru_cache(maxsize=1)
 def active_reference_corpus():
-    """Retrieve private, approved transcripts when available.
+    """Load the approved transcript library once per server process.
 
-    Previously packaged excerpts remain a fallback, never a pretend complete
-    corpus. Query only when a story needs reference preparation.
+    The same private corpus is reused across episodes. Clear this cache only
+    when an administrator replaces the source material.
     """
     from db import load_private_style_corpus
 
@@ -37,6 +38,11 @@ def active_reference_corpus():
     if row and isinstance(row.get("source_text"), str) and row["source_text"].strip():
         return row["source_text"], "private Supabase reference library"
     return load_reference_corpus(), "packaged reference excerpts"
+
+
+def clear_reference_corpus_cache():
+    """Refresh the process cache after an administrator replaces the corpus."""
+    active_reference_corpus.cache_clear()
 
 
 def reference_source_status(corpus=None, origin=None):
