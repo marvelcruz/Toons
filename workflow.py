@@ -1165,7 +1165,11 @@ def _fast_treatment_json(system_prompt, user_prompt, temperature=0.25, progress=
             os.getenv("TOONSCRIPTURE_TREATMENT_OPENROUTER_MODEL", "openrouter/free").strip()
             or "openrouter/free"
         )
-        announce("Trying OpenRouter once (maximum 55-second provider wait).")
+        announce(
+            "Gemini is unavailable. Using one OpenRouter backup request; "
+            "this fallback does not have live Google Search grounding, so verify "
+            "any extra historical claims and cross-references."
+        )
         started = time.monotonic()
         try:
             response = requests.post(
