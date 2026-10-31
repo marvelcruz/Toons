@@ -48,7 +48,7 @@ Stay with us until the end to see what courage costs."""
         }
         captured = {}
 
-        def capture_prompt(system, prompt, temperature, section=None):
+        def capture_prompt(system, prompt, temperature, section=None, progress=None):
             captured["prompt"] = prompt
             return {"core_story": "A test treatment"}
 

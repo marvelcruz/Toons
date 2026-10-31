@@ -1024,7 +1024,255 @@ def _call_gemini_only(system_prompt, user_prompt, temperature=0.3, section="gene
     )
 
 
-def call_json(system_prompt, user_prompt, temperature=0.3, section="general"):
+def _fast_treatment_json(system_prompt, user_prompt, temperature=0.25, progress=None):
+    """Generate a story treatment with one bounded Gemini request and one bounded OpenRouter fallback.
+
+    Treatment used to inherit the general retry chain: several Gemini models,
+    up to three 120-second attempts per model, then multiple 180-second
+    OpenRouter attempts across configured keys. That is not acceptable for an
+    interactive production workflow. This route caps provider waiting time and
+    never fans out across keys or models.
+    """
+    import requests
+
+    errors = []
+
+    def announce(message):
+        if progress:
+            try:
+                progress(message)
+            except Exception:
+                pass
+        print(f"[ToonScripture] treatment: {message}", flush=True)
+
+    def validate(value):
+        if not isinstance(value, dict):
+            raise ValueError("The AI returned JSON, but not a treatment object.")
+        if not value:
+            raise ValueError("The AI returned an empty treatment.")
+        return value
+
+    # One grounded Gemini request on the assigned treatment project.
+    gemini_entries = _api_keys_for("treatment")
+    if gemini_entries:
+        entry = gemini_entries[0]
+        model = str(
+            os.getenv("TOONSCRIPTURE_TREATMENT_GEMINI_MODEL")
+            or os.getenv("GEMINI_MODEL")
+            or "gemini-3.8-flash"
+        ).strip().strip('"').strip("'").removeprefix("models/")
+        if not model.startswith("gemini-"):
+            model = "gemini-3.8-flash"
+
+        announce(f"Checking Gemini once with {model}; Scripture search is enabled.")
+        started = time.monotonic()
+        try:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={
+                    "x-goog-api-key": entry["value"],
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                    "generationConfig": {
+                        "temperature": temperature,
+                        "responseMimeType": "application/json",
+                        "maxOutputTokens": 8192,
+                    },
+                    "tools": [{"google_search": {}}],
+                },
+                timeout=(8, 55),
+            )
+            if not response.ok:
+                category = _gemini_error_category(response)
+                record_ai_usage(
+                    project_name=entry["name"],
+                    section_name="treatment",
+                    model_name=model,
+                    outcome="error",
+                    http_status=response.status_code,
+                )
+                errors.append(f"Gemini: HTTP {response.status_code} ({category})")
+                announce(
+                    f"Gemini returned HTTP {response.status_code} ({category}); "
+                    "trying one bounded backup request."
+                )
+            else:
+                data = response.json()
+                candidates = data.get("candidates") or []
+                parts = (
+                    (candidates[0].get("content") or {}).get("parts")
+                    if candidates else []
+                )
+                raw = "".join(
+                    str(part.get("text") or "")
+                    for part in (parts or [])
+                    if isinstance(part, dict)
+                )
+                result = validate(_extract_json(raw))
+                record_ai_usage(
+                    project_name=entry["name"],
+                    section_name="treatment",
+                    model_name=model,
+                    outcome="success",
+                    http_status=response.status_code,
+                )
+                announce(
+                    f"Gemini completed the treatment in "
+                    f"{time.monotonic() - started:.1f}s."
+                )
+                return result
+        except requests.Timeout:
+            record_ai_usage(
+                project_name=entry["name"],
+                section_name="treatment",
+                model_name=model,
+                outcome="timeout",
+                http_status=None,
+            )
+            errors.append("Gemini: timed out after 55 seconds")
+            announce("Gemini timed out; trying one bounded backup request.")
+        except requests.RequestException as exc:
+            record_ai_usage(
+                project_name=entry["name"],
+                section_name="treatment",
+                model_name=model,
+                outcome="network_error",
+                http_status=None,
+            )
+            errors.append(f"Gemini: network error ({type(exc).__name__})")
+            announce("Gemini had a network error; trying one bounded backup request.")
+        except (ValueError, KeyError, TypeError) as exc:
+            record_ai_usage(
+                project_name=entry["name"],
+                section_name="treatment",
+                model_name=model,
+                outcome="invalid_json",
+                http_status=None,
+            )
+            errors.append(f"Gemini: invalid response ({type(exc).__name__})")
+            announce("Gemini returned an unusable response; trying one bounded backup request.")
+    else:
+        errors.append("Gemini: no treatment API key is configured.")
+
+    # One OpenRouter request, one configured key, no retries or key rotation.
+    openrouter_entries = _openrouter_keys()
+    if openrouter_entries:
+        entry = openrouter_entries[0]
+        model = (
+            os.getenv("TOONSCRIPTURE_TREATMENT_OPENROUTER_MODEL", "openrouter/free").strip()
+            or "openrouter/free"
+        )
+        announce(
+            "Gemini is unavailable. Using one OpenRouter backup request; "
+            "this fallback does not have live Google Search grounding, so verify "
+            "any extra historical claims and cross-references."
+        )
+        started = time.monotonic()
+        try:
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {entry['value']}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://toonscripture.onrender.com",
+                    "X-Title": "ToonScripture OS",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": user_prompt + "\n\nReturn one complete JSON object only.",
+                        },
+                    ],
+                    "temperature": temperature,
+                    "max_tokens": 8192,
+                    "response_format": {"type": "json_object"},
+                    "provider": {"require_parameters": True},
+                },
+                timeout=(8, 55),
+            )
+            if not response.ok:
+                record_ai_usage(
+                    project_name=entry["name"],
+                    section_name="treatment",
+                    model_name=model,
+                    outcome="error",
+                    http_status=response.status_code,
+                )
+                errors.append(f"OpenRouter: HTTP {response.status_code}")
+            else:
+                data = response.json()
+                choices = data.get("choices") or []
+                message = (choices[0] or {}).get("message") if choices else {}
+                content = (message or {}).get("content") or ""
+                if isinstance(content, list):
+                    content = "".join(
+                        str(part.get("text") or "")
+                        for part in content
+                        if isinstance(part, dict)
+                    )
+                result = validate(_extract_json(str(content).strip()))
+                routed_model = str(data.get("model") or model)
+                record_ai_usage(
+                    project_name=entry["name"],
+                    section_name="treatment",
+                    model_name=routed_model,
+                    outcome="success",
+                    http_status=response.status_code,
+                )
+                announce(
+                    f"OpenRouter completed the treatment in "
+                    f"{time.monotonic() - started:.1f}s."
+                )
+                return result
+        except requests.Timeout:
+            record_ai_usage(
+                project_name=entry["name"],
+                section_name="treatment",
+                model_name=model,
+                outcome="timeout",
+                http_status=None,
+            )
+            errors.append("OpenRouter: timed out after 55 seconds")
+        except requests.RequestException as exc:
+            record_ai_usage(
+                project_name=entry["name"],
+                section_name="treatment",
+                model_name=model,
+                outcome="network_error",
+                http_status=None,
+            )
+            errors.append(f"OpenRouter: network error ({type(exc).__name__})")
+        except (ValueError, KeyError, TypeError) as exc:
+            record_ai_usage(
+                project_name=entry["name"],
+                section_name="treatment",
+                model_name=model,
+                outcome="invalid_json",
+                http_status=None,
+            )
+            errors.append(f"OpenRouter: invalid response ({type(exc).__name__})")
+    else:
+        errors.append("OpenRouter: no API key is configured.")
+
+    raise RuntimeError(
+        "Story treatment could not be completed within the bounded provider window. "
+        "Your episode is still saved. " + " | ".join(errors)
+    )
+
+
+def call_json(system_prompt, user_prompt, temperature=0.3, section="general", progress=None):
+    # Treatment is an interactive step: use one grounded Gemini request and
+    # one short OpenRouter fallback instead of the unbounded general retry chain.
+    if section == "treatment":
+        return _fast_treatment_json(
+            system_prompt, user_prompt, temperature=temperature, progress=progress
+        )
     # Creative work runs as a writers' room instead of a primary/fallback chain.
     # Gemini and the OpenRouter free-model pool independently work the same task,
     # then ToonScripture synthesizes their strongest ideas into one result.
@@ -1569,7 +1817,7 @@ def prepare_episode_style(project_id):
     return brief
 
 
-def develop_treatment(project_id):
+def develop_treatment(project_id, progress=None):
     p = get_project(project_id)
     style_brief = _require_prepared_story_style(p)
     target_minutes = float(p['target_minutes'])
@@ -1725,7 +1973,9 @@ Return:
   "anti_filler_notes": []
 }}
 """
-    out = call_json(TREATMENT_SYSTEM, prompt, 0.25, section="treatment")
+    out = call_json(
+        TREATMENT_SYSTEM, prompt, 0.25, section="treatment", progress=progress
+    )
     save_json(project_id, "treatment_json", out, "treatment_ready")
     return out
 

@@ -2030,8 +2030,21 @@ with page_root.container():
                     use_container_width=True,
                 ):
                     try:
-                        with st.spinner("Shaping the story..."):
-                            develop_treatment(project["id"])
+                        with st.status(
+                            "Building your story treatment · bounded AI requests",
+                            expanded=True,
+                        ) as treatment_status:
+                            def report_treatment_progress(message):
+                                treatment_status.write(message)
+
+                            develop_treatment(
+                                project["id"], progress=report_treatment_progress
+                            )
+                            treatment_status.update(
+                                label="Story treatment ready",
+                                state="complete",
+                                expanded=False,
+                            )
                         st.rerun()
                     except Exception as exc:
                         st.error(
