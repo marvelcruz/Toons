@@ -66,7 +66,7 @@ from workflow import (
     review_scene_frame,
 )
 from prompt_composer import compose_scene_package, reference_summary
-from reference_library import reference_source_status
+from reference_library import clear_reference_corpus_cache
 from runtime_contract import (
     script_runtime_report, audio_runtime_report, runtime_label,
     script_fingerprint,
@@ -1402,7 +1402,7 @@ section_kickers = {
 section_descriptions = {
     "🏠 Home": "Every story, every scene, one connected creative process.",
     "📋 Story Checklist": "Keep your Bible story catalogue organised and your production plans on track.",
-    "📚 Story Style & Research": "Prepare the episode's storytelling style from your saved reference library before writing.",
+    "📚 Story Style & Research": "Automatically match each new story to your saved storytelling references before writing.",
     "✍️ Story & Script": "Shape the narrative, collaborate with your writers' room, and refine each script.",
     "🎨 Visual Bible": "Design a consistent world of characters, locations, costumes, and props.",
     "🎙️ Audio": "Build the voice and atmosphere for your episode.",
@@ -1823,25 +1823,26 @@ with page_root.container():
             )
 
             style_brief = load_json(project, "style_brief_json", {}) or {}
-            status = reference_source_status()
-            if status["full_corpus_loaded"]:
-                st.success(
-                    f"Full reference collection ready · {status['lines']:,} lines"
+            status = style_brief.get("reference_source") or {}
+            if style_brief.get("status") == "ready":
+                if status.get("full_corpus_loaded"):
+                    st.success(
+                        f"Full reference collection ready · {status.get('lines', 0):,} lines"
+                    )
+                else:
+                    st.warning(
+                        f"The available reference collection has "
+                        f"{status.get('lines', 0):,} lines. The original collection contains "
+                        "7,325 lines. You can restore the complete file in Library settings."
+                    )
+                st.caption(
+                    f"Source: {status.get('source', 'saved reference library')} · "
+                    f"{status.get('size_bytes', 0):,} bytes"
                 )
-            else:
-                st.warning(
-                    f"The currently available reference collection has "
-                    f"{status['lines']:,} lines. The original collection contains "
-                    "7,325 lines. Upload the full file into the private reference "
-                    "library below to improve coverage."
-                )
-            st.caption(
-                f"Source: {status['source']} · {status['size_bytes']:,} bytes"
-            )
-            with st.expander("Restore or replace the private reference collection"):
+            with st.expander("Reference library settings · one-time setup"):
                 st.write(
-                    "Upload the original transcripts as a UTF-8 .txt file. "
-                    "This saves the material privately in Supabase, not public GitHub."
+                    "Your transcripts are stored privately once and reused automatically "
+                    "for every new story. You do not need to upload them again."
                 )
                 source_upload = st.file_uploader(
                     "Full reference transcripts (.txt)",
@@ -1858,6 +1859,9 @@ with page_root.container():
                         save_private_style_corpus(
                             source_upload.name, text_source
                         )
+                        clear_reference_corpus_cache()
+                        st.session_state.pop(f"_style_auto_attempted_{project['id']}", None)
+                        st.session_state.pop(f"_style_auto_error_{project['id']}", None)
                         st.success("Private reference library saved.")
                         st.rerun()
                     except Exception as exc:
@@ -1868,32 +1872,64 @@ with page_root.container():
                         with st.expander("Technical details"):
                             st.code(str(exc))
 
-            if not style_brief.get("status") == "ready":
-                st.markdown("### Prepare this episode's storytelling style")
+            if style_brief.get("status") != "ready":
+                st.markdown("### Preparing this episode's storytelling style")
                 st.write(
-                    "ToonScripture will identify relevant transcript examples, "
-                    "extract hooks, suspense, rhythm and emotional storytelling "
-                    "principles, and save them before enabling script creation."
+                    "This happens automatically for every new story. ToonScripture "
+                    "selects relevant examples from your saved transcripts and applies "
+                    "your writing playbook. You do not need to start or repeat the research."
                 )
-            if st.button(
-                "Prepare story style"
-                if not style_brief.get("status") == "ready"
-                else "Refresh story style from reference library",
-                type="primary",
-                use_container_width=True,
-                key="prepare_episode_story_style",
-            ):
-                progress = st.progress(15, text="Reading storytelling reference library")
-                try:
-                    progress.progress(45, text="Finding the relevant examples and techniques")
-                    prepare_episode_style(project["id"])
-                    progress.progress(100, text="Style preparation saved")
-                    st.rerun()
-                except Exception as exc:
-                    progress.empty()
-                    st.error("Style preparation could not finish. The episode is unchanged.")
-                    with st.expander("Technical details"):
-                        st.code(str(exc))
+                attempt_key = f"_style_auto_attempted_{project['id']}"
+                error_key = f"_style_auto_error_{project['id']}"
+                if not st.session_state.get(attempt_key):
+                    st.session_state[attempt_key] = True
+                    completed = False
+                    with st.status(
+                        "Preparing your story's reference brief…",
+                        expanded=True,
+                    ) as preparation:
+                        try:
+                            preparation.write("Reading the saved private reference library.")
+                            preparation.write("Selecting examples that match this Bible story.")
+                            brief = prepare_episode_style(project["id"])
+                            if brief.get("status") != "ready":
+                                raise RuntimeError("The story style brief was not saved as ready.")
+                            st.session_state.pop(error_key, None)
+                            preparation.update(
+                                label="Story style prepared",
+                                state="complete",
+                                expanded=False,
+                            )
+                            completed = True
+                        except Exception as exc:
+                            st.session_state[error_key] = str(exc)
+                            preparation.update(
+                                label="Automatic style preparation could not finish",
+                                state="error",
+                                expanded=True,
+                            )
+                    if completed:
+                        st.rerun()
+                else:
+                    error = st.session_state.get(error_key)
+                    if error:
+                        st.error(
+                            "ToonScripture couldn't retrieve the saved references this time. "
+                            "Your episode is safe; you can retry without uploading the library again."
+                        )
+                        with st.expander("Technical details"):
+                            st.code(str(error))
+                    else:
+                        st.info("The automatic preparation has been started for this episode.")
+                    if st.button(
+                        "Retry automatic preparation",
+                        type="primary",
+                        use_container_width=True,
+                        key=f"retry_auto_style_{project['id']}",
+                    ):
+                        st.session_state[attempt_key] = False
+                        st.session_state.pop(error_key, None)
+                        st.rerun()
 
             if style_brief.get("status") == "ready":
                 st.success("Story style preparation complete. Ready for Story & Script.")

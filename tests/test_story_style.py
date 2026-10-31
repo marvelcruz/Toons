@@ -28,11 +28,12 @@ Stay with us until the end to see what courage costs."""
         with (
             patch.object(workflow, "get_project", return_value=self.new_episode),
             patch.object(reference_library, "active_reference_corpus",
-                         return_value=(sample, "private Supabase reference library")),
+                         return_value=(sample, "private Supabase reference library")) as source,
             patch.object(workflow, "save_json", side_effect=lambda *args: saved.append(args)),
             patch.object(workflow, "call_json") as ai,
         ):
             report = workflow.prepare_episode_style("episode-new")
+        source.assert_called_once()
         self.assertEqual(report["status"], "ready")
         self.assertEqual(report["story_name"], "Daniel in the Lions' Den")
         self.assertGreater(len(report["relevant_reference_excerpts"]), 0)
@@ -93,6 +94,22 @@ Stay with us until the end to see what courage costs."""
         with patch.object(reference_library, "active_reference_corpus", return_value=("", "none")):
             with self.assertRaisesRegex(RuntimeError, "No reference transcripts"):
                 reference_library.prepare_story_style(self.new_episode)
+
+    def test_private_corpus_is_cached_between_episodes(self):
+        row = {
+            "source_text": "The saved transcript collection",
+            "source_name": "private references",
+        }
+        reference_library.clear_reference_corpus_cache()
+        try:
+            with patch("db.load_private_style_corpus", return_value=row) as load:
+                first = reference_library.active_reference_corpus()
+                second = reference_library.active_reference_corpus()
+                load.assert_called_once()
+                self.assertEqual(first, second)
+                self.assertEqual(first[0], row["source_text"])
+        finally:
+            reference_library.clear_reference_corpus_cache()
 
     def test_private_reference_status_tracks_completeness(self):
         with patch.object(reference_library, "active_reference_corpus",

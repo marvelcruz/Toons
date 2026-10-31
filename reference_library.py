@@ -25,11 +25,12 @@ def load_reference_corpus():
         return ""
 
 
+@lru_cache(maxsize=1)
 def active_reference_corpus():
-    """Retrieve private, approved transcripts when available.
+    """Load the approved transcript library once per server process.
 
-    Previously packaged excerpts remain a fallback, never a pretend complete
-    corpus. Query only when a story needs reference preparation.
+    The same private corpus is reused across episodes. Clear this cache only
+    when an administrator replaces the source material.
     """
     from db import load_private_style_corpus
 
@@ -39,8 +40,15 @@ def active_reference_corpus():
     return load_reference_corpus(), "packaged reference excerpts"
 
 
-def reference_source_status():
-    text, origin = active_reference_corpus()
+def clear_reference_corpus_cache():
+    """Refresh the process cache after an administrator replaces the corpus."""
+    active_reference_corpus.cache_clear()
+
+
+def reference_source_status(corpus=None, origin=None):
+    if corpus is None or origin is None:
+        corpus, origin = active_reference_corpus()
+    text = corpus or ""
     size_bytes = len(text.encode("utf-8"))
     count_lines = text.count("\n") + 1
     # Earlier source in the user's library was 854,528 bytes / 7,325 lines.
@@ -65,7 +73,8 @@ def prepare_story_style(project):
         raise RuntimeError(
             "The storytelling playbook is unavailable. Restore it before proceeding."
         )
-    status = reference_source_status()
+    corpus, origin = active_reference_corpus()
+    status = reference_source_status(corpus, origin)
     if not status["size_bytes"]:
         raise RuntimeError(
             "No reference transcripts are available. Add the private corpus first."
@@ -76,11 +85,11 @@ def prepare_story_style(project):
         bible_reference=project.get("bible_reference"),
         max_chunks=4,
         max_chars=16000,
+        corpus=corpus,
     )
     if not excerpts:
         # Not every biblical character occurs in the reference collection.
         # Offer general technique examples rather than forcing false matches.
-        corpus, _ = active_reference_corpus()
         excerpts = [
             {"relevance_score": 0, "excerpt": chunk}
             for chunk in _chunks(corpus, chunk_size=1400, overlap=0)[:2]
@@ -181,8 +190,10 @@ def relevant_reference_excerpts(
     treatment=None,
     max_chunks=3,
     max_chars=16000,
+    corpus=None,
 ):
-    corpus, _ = active_reference_corpus()
+    if corpus is None:
+        corpus, _ = active_reference_corpus()
     if not corpus:
         return []
 
