@@ -1658,39 +1658,39 @@ Return:
   }},
   "scriptural_anchor": [],
   "researched_scripture_references": [
-    {
+    {{
       "reference": "",
       "category": "",
       "relevance": "",
       "use_in_story": "",
       "confidence": "high|medium|caution"
-    }
+    }}
   ],
-  "story_universe": {
+  "story_universe": {{
     "character_threads": [
-      {
+      {{
         "subject": "",
         "why_it_matters": "",
         "references": []
-      }
+      }}
     ],
     "place_threads": [
-      {
+      {{
         "place": "",
         "why_it_matters": "",
         "references": []
-      }
+      }}
     ],
     "supporting_character_threads": [
-      {
+      {{
         "subject": "",
         "why_it_matters": "",
         "references": []
-      }
+      }}
     ]
-  },
+  }},
   "series_opportunities": [
-    {
+    {{
       "series_title": "",
       "episode_title": "",
       "part_number": 1,
@@ -1700,7 +1700,7 @@ Return:
       "key_places": [],
       "why_this_deserves_its_own_episode": "",
       "recommended_runtime_minutes": 8
-    }
+    }}
   ],
   "historical_context": [],
   "cinematic_interpretations": [],
