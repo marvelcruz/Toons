@@ -814,7 +814,7 @@ def resilient_list_projects():
 
 def resilient_catalog_summary():
     try:
-        summary = resilient_catalog_summary()
+        summary = catalog_summary()
         st.session_state["_toonscripture_catalog_summary_cache"] = summary
         return summary
     except Exception as exc:
@@ -833,7 +833,7 @@ def resilient_catalog_summary():
 
 def resilient_catalog_progress_summary():
     try:
-        progress = resilient_catalog_progress_summary()
+        progress = catalog_progress_summary()
         st.session_state["_toonscripture_catalog_progress_cache"] = progress
         return progress
     except Exception as exc:
